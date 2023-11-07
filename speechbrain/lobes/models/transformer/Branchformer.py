@@ -20,12 +20,12 @@ from typing import Optional
 from speechbrain.nnet.attention import (
     RelPosMHAXL,
     MultiheadAttention,
-    SummaryMixing,
 )
-from speechbrain.nnet.hypermixing import HyperMixing
+from speechbrain.lobes.models.transformer.hypermixing import HyperMixing
 from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.lobes.models.convolution import ConvolutionalSpatialGatingUnit
 from speechbrain.lobes.models.VanillaNN import VanillaNN
+from speechbrain.nnet.summary_mixing import SummaryMixing
 
 
 class ConvolutionBranch(nn.Module):

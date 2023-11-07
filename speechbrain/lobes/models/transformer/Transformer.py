@@ -23,7 +23,8 @@ import numpy as np
 from .Conformer import ConformerEncoder
 from .Branchformer import BranchformerEncoder
 from speechbrain.nnet.activations import Swish
-from speechbrain.nnet.attention import RelPosEncXL, SummaryMixing
+from speechbrain.nnet.attention import RelPosEncXL
+from speechbrain.nnet.summary_mixing import SummaryMixing
 
 
 class TransformerInterface(nn.Module):
