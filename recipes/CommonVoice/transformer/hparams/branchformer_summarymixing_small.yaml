@@ -38,7 +38,7 @@ ckpt_interval_minutes: 15 # save checkpoint every N min
 
 # Training parameters
 number_of_epochs: 120 # We used 100 for italian and Dutch
-batch_size: 32 # Not used when dynamic batching is activated
+batch_size: 8 # Not used when dynamic batching is activated
 ctc_weight: 0.3
 grad_accumulation_factor: 2
 loss_reduction: 'batchmean'

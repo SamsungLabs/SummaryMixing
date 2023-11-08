@@ -29,10 +29,11 @@ train_data: !ref <output_folder>/train.csv
 valid_data: !ref <output_folder>/dev.csv
 test_data: !ref <output_folder>/test.csv
 tokenizer_file: speechbrain/asr-transformer-aishell/tokenizer.ckpt
+remove_compressed_wavs: False
 
 # Training parameters
 number_of_epochs: 200
-# batch_size: 16 # For SummaryMixing, we don't use static batching.
+batch_size: 16 # For SummaryMixing, we don't use static batching.
 ctc_weight: 0.3
 gradient_accumulation: 1
 loss_reduction: 'batchmean'
