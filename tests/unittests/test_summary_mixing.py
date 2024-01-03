@@ -151,7 +151,3 @@ def test_summary_mixing_value(device):
 
     assert torch.allclose(sm_layer_mono_head(inputs), output_mono, atol=1e-04)
     assert torch.allclose(sm_layer_multi_heads(inputs), output_multi, atol=1e-04)
-
-
-test_summary_mixing_value("cpu")
-test_summary_mixing_shape("cpu")
