@@ -15,7 +15,6 @@ Authors
 import math
 import torch
 import logging
-import numpy as np
 import torch.nn as nn
 from typing import Optional
 from speechbrain.lobes.models.VanillaNN import VanillaNN
@@ -45,11 +44,11 @@ class SummaryMixing(nn.Module):
     summary_hid_dim: list [int], optional
         A list of dimension specifying both the number of hidden layers
         as well as the size of them in the summary projection branch
-        (default: [1024]).
+        (default: [512]).
     summary_out_dim: int, optional
         The dimension of the output of the summary projection branch. This
         will be concatenated with the output of the local branch
-        (default: 1024).
+        (default: 512).
     activation: torch.nn.Module, optional
         Torch module specifying the activation function used in both the local
         and summary branches.
@@ -75,8 +74,8 @@ class SummaryMixing(nn.Module):
         nhead,
         local_proj_hid_dim: Optional[list] = [512],
         local_proj_out_dim: Optional[int] = 512,
-        summary_hid_dim: Optional[list] = [1024],
-        summary_out_dim: Optional[int] = 1024,
+        summary_hid_dim: Optional[list] = [512],
+        summary_out_dim: Optional[int] = 512,
         activation: Optional[nn.Module] = nn.GELU,
         mode: Optional[str] = "SummaryMixing",
     ):
@@ -91,7 +90,6 @@ class SummaryMixing(nn.Module):
         self.local_proj_out_dim = local_proj_out_dim
         self.summary_hid_dim = summary_hid_dim
         self.summary_out_dim = summary_out_dim
-        self.summary_reshaped_dim = int(np.sqrt(summary_out_dim))
         self.enc_dim = enc_dim
         self.activation = activation()
         self.local_dnn_blocks = local_proj_hid_dim + [local_proj_out_dim]
@@ -142,7 +140,7 @@ class SummaryMixing(nn.Module):
         if attention_mask is not None:
             attention_mask = torch.logical_not(attention_mask).unsqueeze(-1).float()
         else:
-            attention_mask = 1.0
+            attention_mask = torch.ones((x.shape[0], x.shape[1])).unsqueeze(-1).float()
 
         if self.mode == "SummaryMixing":
             return self._forward_mixing(x, attention_mask)

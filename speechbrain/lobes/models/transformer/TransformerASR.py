@@ -40,20 +40,22 @@ class TransformerASR(TransformerInterface):
         Size of vocabulary.
     input_size: int
         Input feature size.
-    d_model : int, optional
+    d_model: int, optional
         Embedding dimension size.
         (default=512).
-    nhead : int, optional
+    nhead: int, optional
         The number of heads in the multi-head attention models (default=8).
-    num_encoder_layers : int, optional
+        If SummaryMixing is used, then it corresponds to the number of splits
+        in the different projections (reduction of neural parameters).
+    num_encoder_layers: int, optional
         The number of sub-encoder-layers in the encoder (default=6).
-    num_decoder_layers : int, optional
+    num_decoder_layers: int, optional
         The number of sub-decoder-layers in the decoder (default=6).
-    dim_ffn : int, optional
+    dim_ffn: int, optional
         The dimension of the feedforward network model (default=2048).
-    dropout : int, optional
+    dropout: int, optional
         The dropout value (default=0.1).
-    activation : torch.nn.Module, optional
+    activation: torch.nn.Module, optional
         The activation function of FFN layers.
         Recommended: relu or gelu (default=relu).
     positional_encoding: str, optional
@@ -89,6 +91,10 @@ class TransformerASR(TransformerInterface):
     use_linear_after_conv: bool, optional
         If True, will apply a linear transformation of size input_size//2.
         -> Branchformer
+    local_proj_hid_dim: list [int], optional
+        A list of dimension specifying both the number of hidden layers
+        as well as the size of them in the local projection branch
+        (default: [512]).
     local_proj_out_dim: int, optional
         The dimension of the output of the local projection branch. This
         will be concatenated with the output of the summary branch
@@ -96,11 +102,11 @@ class TransformerASR(TransformerInterface):
     summary_hid_dim: list [int], optional
         A list of dimension specifying both the number of hidden layers
         as well as the size of them in the summary projection branch
-        (default: [1024]).
+        (default: [512]).
     summary_out_dim: int, optional
         The dimension of the output of the summary projection branch. This
         will be concatenated with the output of the local branch
-        (default: 1024).
+        (default: 512).
     activation: torch.nn.Module, optional
         Torch module specifying the activation function used in both the local
         and summary branches.
@@ -150,8 +156,8 @@ class TransformerASR(TransformerInterface):
         use_linear_after_conv: Optional[bool] = False,
         local_proj_hid_dim: Optional[list] = [512],
         local_proj_out_dim: Optional[int] = 512,
-        summary_hid_dim: Optional[list] = [1024],
-        summary_out_dim: Optional[int] = 1024,
+        summary_hid_dim: Optional[list] = [512],
+        summary_out_dim: Optional[int] = 512,
         mode: Optional[str] = "SummaryMixing",
     ):
         super().__init__(
@@ -327,7 +333,6 @@ class TransformerASR(TransformerInterface):
         if self.attention_type == "RelPosMHAXL":
             # we use fixed positional encodings in the decoder
             tgt = tgt + self.positional_encoding_decoder(tgt)
-            encoder_out = encoder_out + self.positional_encoding_decoder(encoder_out)
             # pos_embs_target = self.positional_encoding(tgt)
             pos_embs_encoder = None  # self.positional_encoding(src)
             pos_embs_target = None
@@ -371,7 +376,10 @@ class TransformerASR(TransformerInterface):
             src_key_padding_mask = ~length_to_mask(abs_len).bool()
 
         src = self.custom_src_module(src)
-        if self.attention_type == "hypermixing":
+        if (
+            self.attention_type == "hypermixing"
+            or self.attention_type == "SummaryMixing"
+        ):
             pos_embs_source = None
         elif self.attention_type == "RelPosMHAXL":
             pos_embs_source = self.positional_encoding(src)

@@ -98,6 +98,10 @@ class TransformerInterface(nn.Module):
     use_linear_after_conv: bool, optional
         If True, will apply a linear transformation of size input_size//2.
         -> Branchformer
+    local_proj_hid_dim: list [int], optional
+        A list of dimension specifying both the number of hidden layers
+        as well as the size of them in the local projection branch
+        (default: [512]).
     local_proj_out_dim: int, optional
         The dimension of the output of the local projection branch. This
         will be concatenated with the output of the summary branch

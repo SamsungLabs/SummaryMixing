@@ -124,6 +124,10 @@ class BranchformerEncoderLayer(nn.Module):
          Activation function used at the gate of the CSGU module.
     use_linear_after_conv: bool, optional
         If True, will apply a linear transformation of size input_size//2
+    local_proj_hid_dim: list [int], optional
+        A list of dimension specifying both the number of hidden layers
+        as well as the size of them in the local projection branch
+        (default: [512]).
     local_proj_out_dim: int, optional
         The dimension of the output of the local projection branch. This
         will be concatenated with the output of the summary branch
@@ -131,11 +135,11 @@ class BranchformerEncoderLayer(nn.Module):
     summary_hid_dim: list [int], optional
         A list of dimension specifying both the number of hidden layers
         as well as the size of them in the summary projection branch
-        (default: [1024]).
+        (default: [512]).
     summary_out_dim: int, optional
         The dimension of the output of the summary projection branch. This
         will be concatenated with the output of the local branch
-        (default: 1024).
+        (default: 512).
     activation: torch.nn.Module, optional
         Torch module specifying the activation function used in both the local
         and summary branches.
@@ -171,8 +175,8 @@ class BranchformerEncoderLayer(nn.Module):
         use_linear_after_conv=False,
         local_proj_hid_dim=[512],
         local_proj_out_dim=512,
-        summary_hid_dim=[1024],
-        summary_out_dim=1024,
+        summary_hid_dim=[512],
+        summary_out_dim=512,
         mode="SummaryMixing",
     ):
         super().__init__()
@@ -361,6 +365,10 @@ class BranchformerEncoder(nn.Module):
          Activation function used at the gate of the CSGU module.
     use_linear_after_conv: bool, optional
         If True, will apply a linear transformation of size input_size//2.
+    local_proj_hid_dim: list [int], optional
+        A list of dimension specifying both the number of hidden layers
+        as well as the size of them in the local projection branch
+        (default: [512]).
     local_proj_out_dim: int, optional
         The dimension of the output of the local projection branch. This
         will be concatenated with the output of the summary branch
@@ -368,11 +376,11 @@ class BranchformerEncoder(nn.Module):
     summary_hid_dim: list [int], optional
         A list of dimension specifying both the number of hidden layers
         as well as the size of them in the summary projection branch
-        (default: [1024]).
+        (default: [512]).
     summary_out_dim: int, optional
         The dimension of the output of the summary projection branch. This
         will be concatenated with the output of the local branch
-        (default: 1024).
+        (default: 512).
     activation: torch.nn.Module, optional
         Torch module specifying the activation function used in both the local
         and summary branches.
@@ -410,8 +418,8 @@ class BranchformerEncoder(nn.Module):
         use_linear_after_conv=False,
         local_proj_hid_dim=[512],
         local_proj_out_dim=512,
-        summary_hid_dim=[1024],
-        summary_out_dim=1024,
+        summary_hid_dim=[512],
+        summary_out_dim=512,
         mode="SummaryMixing",
     ):
         super().__init__()
