@@ -28,4 +28,4 @@ Please cite SummaryMixing as follows:
 ```
 
 ## Licence
-This code is distributed under the CC-BY-NC 4.0 Licence. See the [Licence](#) for further details
+This code is distributed under the CC-BY-NC 4.0 Licence. See the [Licence](https://github.com/SamsungLabs/SummaryMixing/blob/main/LICENCE.md) for further details
