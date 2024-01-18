@@ -24,8 +24,8 @@ The following Table gives an idea of the results observed with Librispeech. More
 |                  | HyperMixer         | 3.1                | 2.3                 | 5.6                 | 126            | 30            |
 |                  | FastFormer         | 3.0                | 2.2                 | 5.4                 | 96             | 23            |
 |                  | **Proposed**    |
-|                  | SummaryMixing      | 2.8       | 2.1        | 5.1        | 98             | 21   |
-|                  | SummaryMixing-lite | 3.0                | 2.2                 | 5.2                 | 98             | 23            |
+| Conformer        | SummaryMixing      | 2.8       | 2.1        | 5.1        | 98             | 21   |
+| Branchformers    | SummaryMixing-lite | 3.0                | 2.2                 | 5.2                 | 98             | 23            |
 |                  | SummaryMixing      | 2.9                | 2.2                 | 5.1        | 105            | 26            |
 |                  | +Summary Decoder   | 3.1                | 2.3                 | 5.3                 | 104            | 26            |
 
