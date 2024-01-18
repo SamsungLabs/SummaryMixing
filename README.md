@@ -30,6 +30,7 @@ The following Table gives an idea of the results observed with Librispeech. More
 |                  | +Summary Decoder   | 3.1                | 2.3                 | 5.3                 | 104            | 26            |
 
 
+<img src="summarymixing.png" alt="RTF performance" style="height: 400px;"/>
 
 
 ## Citation
