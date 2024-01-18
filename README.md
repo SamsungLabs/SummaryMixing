@@ -10,7 +10,27 @@ SummaryMixing is a linear-time alternative to self-attention (SA) for speech pro
 
 ### A few results
 
-A SummaryMixing-equipped Conformer outperforms a self-attention equivalent model on Librispeech test-clean (2.1% vs 2.3%) and test-other (5.1% vs 5.4%). This is done with a 30% training reduction as well as less than half of the memory budget (from 46GB to 21GB). Such gains are also visible with CommonVoice, AISHELL-1 and Tedlium2. This gain is also visible at decoding time as the real-time factor remains stable (does not increase) with the sentence length for a SummaryMixing Branchformer while the same model with self-attention would see its RTF following a quadratic increase. The SpeechBrain configuration files given in this repository are sufficient to reproduce these numbers.
+A SummaryMixing-equipped Conformer outperforms a self-attention equivalent model on Librispeech test-clean (2.1% vs 2.3%) and test-other (5.1% vs 5.4%). This is done with a 30% training reduction as well as less than half of the memory budget (from 46GB to 21GB). Such gains are also visible with CommonVoice, AISHELL-1 and Tedlium2. This gain is also visible at decoding time as the real-time factor remains stable (does not increase) with the sentence length for a SummaryMixing Branchformer while the same model with self-attention would see its RTF following a quadratic increase. The SpeechBrain configuration files in this repository can reproduce these numbers.
+
+The following Table gives an idea of the results observed with Librispeech. More results on CommonVoice, AISHELL, Tedlium, SLURP, and Google Speech Command are available in the [article](https://arxiv.org/abs/2307.07421).
+| Encoder | Variant     | Dev-clean | Test-clean | Test-other | GPU   | VRAM |
+|------------------|----------------------|--------------------|---------------------|---------------------|----------------|---------------|
+|                  |                      | **WER \%**    |   **WER \%**  |   **WER \%**   | **hours** | **GB**   |
+| ContextNet       | N.A.                 | 3.3                | 2.3                 | 5.9                 | 160            | 25            |
+| Transformer      | Self-attention     | 3.3                | 2.3                 | 5.5                 | 129            | 40            |
+| Conformer        | Self-attention     | 2.8       | 2.3                 | 5.4                 | 137            | 46            |
+| Branchformer     | Self-attention     | 2.9                | 2.2                 | 5.1        | 132            | 45            |
+|                  | CNN Only          | 3.1                | 2.4                 | 5.7                 | 83    | 22            |
+|                  | HyperMixer         | 3.1                | 2.3                 | 5.6                 | 126            | 30            |
+|                  | FastFormer         | 3.0                | 2.2                 | 5.4                 | 96             | 23            |
+|                  | **Proposed**    |
+|                  | SummaryMixing      | 2.8       | 2.1        | 5.1        | 98             | 21   |
+|                  | SummaryMixing-lite | 3.0                | 2.2                 | 5.2                 | 98             | 23            |
+|                  | SummaryMixing      | 2.9                | 2.2                 | 5.1        | 105            | 26            |
+|                  | +Summary Decoder   | 3.1                | 2.3                 | 5.3                 | 104            | 26            |
+
+
+
 
 ## Citation
 
