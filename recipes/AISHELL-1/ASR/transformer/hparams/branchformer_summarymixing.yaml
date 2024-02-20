@@ -31,7 +31,8 @@ test_data: !ref <output_folder>/test.csv
 noise_annotation: !ref <save_folder>/noise.csv #The data manifest files are created by the data preparation script
 tokenizer_file: speechbrain/asr-transformer-aishell/tokenizer.ckpt
 
-# Training parameters
+####################### Training Parameters ####################################
+
 number_of_epochs: 200
 batch_size: 16 # For SummaryMixing, we don't use static batching
 ctc_weight: 0.3
@@ -75,7 +76,8 @@ valid_dataloader_opts:
 test_dataloader_opts:
     batch_size: !ref <batch_size>
 
-####################### Model parameters ###########################
+####################### Model Parameters #######################################
+
 # Transformer
 attention_type: SummaryMixing # SummaryMixing, regularMHA or RelPosMHAXL
 mode: SummaryMixing # SummaryMixing or SummaryMixing-lite
@@ -110,7 +112,7 @@ valid_beam_size: 10
 test_beam_size: 10
 ctc_weight_decode: 0.40
 
-############################## models ################################
+############################## Models ##########################################
 
 CNN: !new:speechbrain.lobes.models.convolution.ConvolutionFrontEnd
     input_shape: (8, 10, 80)
@@ -173,6 +175,7 @@ SGD: !name:torch.optim.SGD
     momentum: 0.99
     nesterov: True
 
+############################## Decoding & optimiser ############################
 
 # Scorer
 ctc_scorer: !new:speechbrain.decoders.scorer.CTCScorer
@@ -242,48 +245,32 @@ compute_features: !new:speechbrain.lobes.features.Fbank
     n_fft: !ref <n_fft>
     n_mels: !ref <n_mels>
 
- # ----- FEATURE AUGMENTATION ----- #
-time_drop_length_low: 0  # Min length for temporal chunk to drop in spectrogram
-time_drop_length_high: 100  # Max length for temporal chunk to drop in spectrogram
-time_drop_count_low: 2  # Min number of chunks to drop in time in the spectrogram
-time_drop_count_high: 2  # Max number of chunks to drop in time in the spectrogram
-time_drop_replace: "zeros"  # Method of dropping chunks
+
+############################## Augmentation ####################################
 
 # Time Drop
 time_drop: !new:speechbrain.augment.freq_domain.SpectrogramDrop
-    drop_length_low: !ref <time_drop_length_low>
-    drop_length_high: !ref <time_drop_length_high>
-    drop_count_low: !ref <time_drop_count_low>
-    drop_count_high: !ref <time_drop_count_high>
-    replace: !ref <time_drop_replace>
+    drop_length_low: 0
+    drop_length_high: 100
+    drop_count_low: 2
+    drop_count_high: 2
+    replace: "zeros"
     dim: 1
-
-freq_drop_length_low: 30  # Min length for chunks to drop in frequency in the spectrogram
-freq_drop_length_high: 40  # Max length for chunks to drop in frequency in the spectrogram
-freq_drop_count_low: 2  # Min number of chunks to drop in frequency in the spectrogram
-freq_drop_count_high: 2  # Max number of chunks to drop in frequency in the spectrogram
-freq_drop_replace: "zeros"  # Method of dropping chunks
 
 # Frequency Drop
 freq_drop: !new:speechbrain.augment.freq_domain.SpectrogramDrop
-    drop_length_low: !ref <freq_drop_length_low>
-    drop_length_high: !ref <freq_drop_length_high>
-    drop_count_low: !ref <freq_drop_count_low>
-    drop_count_high: !ref <freq_drop_count_high>
-    replace: !ref <freq_drop_replace>
+    drop_length_low: 30
+    drop_length_high: 40
+    drop_count_low: 2
+    drop_count_high: 2
+    replace: "zeros"
     dim: 2
-
-time_warp_window: 5  # Length of time warping window
-time_warp_mode: "bicubic"  # Time warping method
 
 # Time warp
 time_warp: !new:speechbrain.augment.freq_domain.Warping
-    warp_window: !ref <time_warp_window>
-    warp_mode: !ref <time_warp_mode>
     dim: 1
 
 fea_augment: !new:speechbrain.augment.augmenter.Augmenter
-    parallel_augment: False
     concat_original: True
     repeat_augment: 1
     shuffle_augmentations: False
