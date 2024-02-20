@@ -21,7 +21,7 @@ from speechbrain.nnet.attention import (
     RelPosMHAXL,
     MultiheadAttention,
 )
-from speechbrain.lobes.models.transformer.hypermixing import HyperMixing
+from speechbrain.nnet.hypermixing import HyperMixing
 from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.lobes.models.convolution import ConvolutionalSpatialGatingUnit
 from speechbrain.lobes.models.VanillaNN import VanillaNN
