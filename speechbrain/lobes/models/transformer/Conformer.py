@@ -1,4 +1,4 @@
-"""Conformer implementation.
+""" SummaryMixing © 2023 by Samsung Electronics is licensed under CC BY-NC 4.0.
 
 Authors
 -------
