@@ -124,10 +124,6 @@ class BranchformerEncoderLayer(nn.Module):
          Activation function used at the gate of the CSGU module.
     use_linear_after_conv: bool, optional
         If True, will apply a linear transformation of size input_size//2
-    local_proj_hid_dim: list [int], optional
-        A list of dimension specifying both the number of hidden layers
-        as well as the size of them in the local projection branch
-        (default: [512]).
     local_proj_out_dim: int, optional
         The dimension of the output of the local projection branch. This
         will be concatenated with the output of the summary branch
@@ -135,11 +131,11 @@ class BranchformerEncoderLayer(nn.Module):
     summary_hid_dim: list [int], optional
         A list of dimension specifying both the number of hidden layers
         as well as the size of them in the summary projection branch
-        (default: [512]).
+        (default: [1024]).
     summary_out_dim: int, optional
         The dimension of the output of the summary projection branch. This
         will be concatenated with the output of the local branch
-        (default: 512).
+        (default: 1024).
     activation: torch.nn.Module, optional
         Torch module specifying the activation function used in both the local
         and summary branches.
@@ -175,8 +171,8 @@ class BranchformerEncoderLayer(nn.Module):
         use_linear_after_conv=False,
         local_proj_hid_dim=[512],
         local_proj_out_dim=512,
-        summary_hid_dim=[512],
-        summary_out_dim=512,
+        summary_hid_dim=[1024],
+        summary_out_dim=1024,
         mode="SummaryMixing",
     ):
         super().__init__()
@@ -200,7 +196,7 @@ class BranchformerEncoderLayer(nn.Module):
                     mask_pos_future=False,
                 )
                 self.merge_proj = torch.nn.Linear(d_model * 2, d_model)
-            elif attention_type == "HyperMixer":
+            elif attention_type == "hypermixing":
                 self.mha_layer = HyperMixing(
                     input_output_dim=d_model,
                     hypernet_size=local_proj_hid_dim[0],
@@ -365,10 +361,6 @@ class BranchformerEncoder(nn.Module):
          Activation function used at the gate of the CSGU module.
     use_linear_after_conv: bool, optional
         If True, will apply a linear transformation of size input_size//2.
-    local_proj_hid_dim: list [int], optional
-        A list of dimension specifying both the number of hidden layers
-        as well as the size of them in the local projection branch
-        (default: [512]).
     local_proj_out_dim: int, optional
         The dimension of the output of the local projection branch. This
         will be concatenated with the output of the summary branch
@@ -376,11 +368,11 @@ class BranchformerEncoder(nn.Module):
     summary_hid_dim: list [int], optional
         A list of dimension specifying both the number of hidden layers
         as well as the size of them in the summary projection branch
-        (default: [512]).
+        (default: [1024]).
     summary_out_dim: int, optional
         The dimension of the output of the summary projection branch. This
         will be concatenated with the output of the local branch
-        (default: 512).
+        (default: 1024).
     activation: torch.nn.Module, optional
         Torch module specifying the activation function used in both the local
         and summary branches.
@@ -418,8 +410,8 @@ class BranchformerEncoder(nn.Module):
         use_linear_after_conv=False,
         local_proj_hid_dim=[512],
         local_proj_out_dim=512,
-        summary_hid_dim=[512],
-        summary_out_dim=512,
+        summary_hid_dim=[1024],
+        summary_out_dim=1024,
         mode="SummaryMixing",
     ):
         super().__init__()
@@ -456,6 +448,7 @@ class BranchformerEncoder(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
+        dynchunktrain_config=None,
     ):
         """
         Arguments
@@ -471,6 +464,9 @@ class BranchformerEncoder(nn.Module):
             If custom pos_embs are given it needs to have the shape (1, 2*S-1, E)
             where S is the sequence length, and E is the embedding dimension.
         """
+        assert (
+            dynchunktrain_config is None
+        ), "Dynamic Chunk Training unsupported for this encoder"
 
         if self.attention_type == "RelPosMHAXL":
             if pos_embs is None:
