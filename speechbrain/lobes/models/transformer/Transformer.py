@@ -24,6 +24,7 @@ from .Conformer import ConformerEncoder
 from .Branchformer import BranchformerEncoder
 from speechbrain.nnet.activations import Swish
 from speechbrain.nnet.attention import RelPosEncXL
+from speechbrain.nnet.CNN import Conv1d
 from speechbrain.nnet.summary_mixing import SummaryMixing
 
 
@@ -98,10 +99,6 @@ class TransformerInterface(nn.Module):
     use_linear_after_conv: bool, optional
         If True, will apply a linear transformation of size input_size//2.
         -> Branchformer
-    local_proj_hid_dim: list [int], optional
-        A list of dimension specifying both the number of hidden layers
-        as well as the size of them in the local projection branch
-        (default: [512]).
     local_proj_out_dim: int, optional
         The dimension of the output of the local projection branch. This
         will be concatenated with the output of the summary branch
@@ -297,6 +294,10 @@ class PositionalEncoding(nn.Module):
 
     def __init__(self, input_size, max_len=2500):
         super().__init__()
+        if input_size % 2 != 0:
+            raise ValueError(
+                f"Cannot use sin/cos positional encoding with odd channels (got channels={input_size})"
+            )
         self.max_len = max_len
         pe = torch.zeros(self.max_len, input_size, requires_grad=False)
         positions = torch.arange(0, self.max_len).unsqueeze(1).float()
@@ -345,6 +346,17 @@ class TransformerEncoderLayer(nn.Module):
     attention_type: str, optional
         Type of attention layer used in all Transformer or Conformer layers.
         e.g. SummaryMixing, regularMHA or RelPosMHA.
+    ffn_type: str
+        type of ffn: regularFFN/1dcnn
+    ffn_cnn_kernel_size_list: list of int
+        kernel size of 2 1d-convs if ffn_type is 1dcnn
+    causal: bool, optional
+        Whether the encoder should be causal or not (the decoder is always causal).
+        If causal the Conformer convolutional layer is causal.
+    mode: string, optional
+        One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
+        according to the definition of the article. "SummaryMixing-lite" removes the
+        local project branch.
 
     Example
     -------
@@ -366,6 +378,8 @@ class TransformerEncoderLayer(nn.Module):
         dropout=0.0,
         activation=nn.ReLU,
         normalize_before=False,
+        ffn_type="regularFFN",
+        ffn_cnn_kernel_size_list=[3, 3],
         attention_type="SummaryMixing",
         causal=False,
         local_proj_hid_dim=[512],
@@ -406,9 +420,26 @@ class TransformerEncoderLayer(nn.Module):
                 mode=mode,
             )
 
-        self.pos_ffn = sb.nnet.attention.PositionalwiseFeedForward(
-            d_ffn=d_ffn, input_size=d_model, dropout=dropout, activation=activation,
-        )
+        if ffn_type == "regularFFN":
+            self.pos_ffn = sb.nnet.attention.PositionalwiseFeedForward(
+                d_ffn=d_ffn, input_size=d_model, dropout=dropout, activation=activation,
+            )
+        elif ffn_type == "1dcnn":
+            self.pos_ffn = nn.Sequential(
+                Conv1d(
+                    in_channels=d_model,
+                    out_channels=d_ffn,
+                    kernel_size=ffn_cnn_kernel_size_list[0],
+                    padding="causal" if causal else "same",
+                ),
+                nn.ReLU(),
+                Conv1d(
+                    in_channels=d_ffn,
+                    out_channels=d_model,
+                    kernel_size=ffn_cnn_kernel_size_list[1],
+                    padding="causal" if causal else "same",
+                ),
+            )
 
         self.norm1 = sb.nnet.normalization.LayerNorm(d_model, eps=1e-6)
         self.norm2 = sb.nnet.normalization.LayerNorm(d_model, eps=1e-6)
@@ -416,6 +447,7 @@ class TransformerEncoderLayer(nn.Module):
         self.dropout2 = torch.nn.Dropout(dropout)
 
         self.normalize_before = normalize_before
+        self.pos_ffn_type = ffn_type
 
     def forward(
         self,
@@ -493,6 +525,28 @@ class TransformerEncoder(nn.Module):
     input_module: torch class
         The module to process the source input feature to expected
         feature dimension (Optional).
+    activation: torch.nn.Module, optional
+        The activation function for Feed-Forward Netowrk layer,
+        e.g., relu or gelu or swish.
+    normalize_before: bool, optional
+        Whether normalization should be applied before or after MHA or FFN in Transformer layers.
+        Defaults to True as this was shown to lead to better performance and training stability.
+    causal: bool, optional
+        Whether the encoder should be causal or not (the decoder is always causal).
+        If causal the Conformer convolutional layer is causal.
+    layerdrop_prob: float
+        The probability to drop an entire layer
+    attention_type: str, optional
+        Type of attention layer used in all Transformer or Conformer layers.
+        e.g. SummaryMixing, regularMHA or RelPosMHA.
+    ffn_type: str
+        type of ffn: regularFFN/1dcnn
+    ffn_cnn_kernel_size_list: list of int
+        conv kernel size of 2 1d-convs if ffn_type is 1dcnn
+    mode: string, optional
+        One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
+        according to the definition of the article. "SummaryMixing-lite" removes the
+        local project branch.
 
     Example
     -------
@@ -518,7 +572,9 @@ class TransformerEncoder(nn.Module):
         normalize_before=False,
         causal=False,
         layerdrop_prob=0.0,
-        attention_type="SummaryMixing",
+        attention_type="regularMHA",
+        ffn_type="regularFFN",
+        ffn_cnn_kernel_size_list=[3, 3],
         local_proj_hid_dim=[512],
         local_proj_out_dim=512,
         summary_hid_dim=[1024],
@@ -540,6 +596,8 @@ class TransformerEncoder(nn.Module):
                     normalize_before=normalize_before,
                     causal=causal,
                     attention_type=attention_type,
+                    ffn_type=ffn_type,
+                    ffn_cnn_kernel_size_list=ffn_cnn_kernel_size_list,
                     local_proj_hid_dim=local_proj_hid_dim,
                     local_proj_out_dim=local_proj_out_dim,
                     summary_hid_dim=summary_hid_dim,
@@ -559,6 +617,7 @@ class TransformerEncoder(nn.Module):
         src_mask: Optional[torch.Tensor] = None,
         src_key_padding_mask: Optional[torch.Tensor] = None,
         pos_embs: Optional[torch.Tensor] = None,
+        dynchunktrain_config=None,
     ):
         """
         Arguments
@@ -570,6 +629,10 @@ class TransformerEncoder(nn.Module):
         src_key_padding_mask : tensor
             The mask for the src keys per batch (optional).
         """
+        assert (
+            dynchunktrain_config is None
+        ), "Dynamic Chunk Training unsupported for this encoder"
+
         output = src
         if self.layerdrop_prob > 0.0:
             keep_probs = self.rng.random(len(self.layers))
@@ -895,7 +958,7 @@ class NormalizedEmbedding(nn.Module):
 
 def get_key_padding_mask(padded_input, pad_idx):
     """Creates a binary mask to prevent attention to padded locations.
-
+    We suggest using get_mask_from_lengths instead of this function.
     Arguments
     ----------
     padded_input: int
@@ -952,3 +1015,30 @@ def get_lookahead_mask(padded_input):
         .masked_fill(mask == 1, float(0.0))
     )
     return mask.detach().to(padded_input.device)
+
+
+def get_mask_from_lengths(lengths, max_len=None):
+    """Creates a binary mask from sequence lengths
+    Arguments
+    ---------
+    lengths: torch.Tensor
+        A tensor of sequence lengths
+    max_len: int (Optional)
+        Maximum sequence length, defaults to None.
+    Returns
+    -------
+    mask: torch.Tensor
+        the mask where padded elements are set to True.
+        Then one can use tensor.masked_fill_(mask, 0) for the masking.
+    Example
+    -------
+    >>> lengths = torch.tensor([3, 2, 4])
+    >>> get_mask_from_lengths(lengths)
+    tensor([[False, False, False,  True],
+            [False, False,  True,  True],
+            [False, False, False, False]])
+    """
+    if max_len is None:
+        max_len = torch.max(lengths).item()
+    seq_range = torch.arange(max_len, device=lengths.device, dtype=lengths.dtype)
+    return ~(seq_range.unsqueeze(0) < lengths.unsqueeze(1))

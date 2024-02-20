@@ -11,10 +11,11 @@
 # Bhattacharya
 # ############################################################################
 # Seed needs to be set at top of yaml, before objects with parameters are made
-seed: 3407
+seed: 1234
 __set_seed: !apply:torch.manual_seed [!ref <seed>]
-output_folder: !ref results/branchformer_summarymixing_small/<seed>
-wer_file: !ref <output_folder>/wer.txt
+output_folder: !ref results/transformer_fr/<seed>
+test_wer_file: !ref <output_folder>/wer_test.txt
+valid_wer_file: !ref <output_folder>/wer_valid.txt
 save_folder: !ref <output_folder>/save
 train_log: !ref <output_folder>/train_log.txt
 
@@ -24,7 +25,7 @@ train_tsv_file: !ref <data_folder>/train.tsv  # Standard CommonVoice .tsv files
 dev_tsv_file: !ref <data_folder>/dev.tsv  # Standard CommonVoice .tsv files
 test_tsv_file: !ref <data_folder>/test.tsv  # Standard CommonVoice .tsv files
 accented_letters: True
-language: fr # use 'it' for Italian, 'nl' for Kinyarwanda
+language: fr # use 'it' for Italian, 'rw' for Kinyarwanda, 'en' for english
 train_csv: !ref <save_folder>/train.csv
 valid_csv: !ref <save_folder>/dev.csv
 test_csv: !ref <save_folder>/test.csv
@@ -36,20 +37,22 @@ avoid_if_longer_than: 10.0
 
 ckpt_interval_minutes: 15 # save checkpoint every N min
 
-# Training parameters
+####################### Training Parameters ####################################
 number_of_epochs: 120 # We used 100 for italian and Dutch
 batch_size: 8 # Not used when dynamic batching is activated
 ctc_weight: 0.3
 grad_accumulation_factor: 2
 loss_reduction: 'batchmean'
 sorting: random
+precision: fp32 # bf16, fp16 or fp32
 
 # stages related parameters
 stage_one_epochs: 40
 lr_adam: 0.0008 # We used 0.0005 for italian and 0.0008 for Dutch
+lr_sgd: 0.0001
 
 # BPE parameters
-token_type: unigram  # We used BPE for Dutch
+token_type: unigram  # ["unigram", "bpe", "char"]
 character_coverage: 1.0
 
 # Feature parameters
@@ -71,20 +74,20 @@ test_dataloader_opts:
     batch_size: !ref <batch_size>
     num_workers: 6
 
-####################### Model parameters ###########################
+####################### Model Parameters ###########################
 # Transformer
 attention_type: SummaryMixing # SummaryMixing, regularMHA or RelPosMHAXL
 mode: SummaryMixing # SummaryMixing or SummaryMixing-lite
-d_model: 256
+d_model: 512
 nhead: 1 # 1 is faster but 4 gives very slightly better performance (WER)
-num_encoder_layers: 12
-num_decoder_layers: 4
-decoder_linear_units: 1024
-csgu_linear_units: 1536
+num_encoder_layers: 18
+num_decoder_layers: 6
+decoder_linear_units: 2048
+csgu_linear_units: 3072
 csgu_kernel_size: 31
-local_proj_hid_dim: [384]
+local_proj_hid_dim: [512]
 local_proj_out_dim: !ref <d_model>
-summary_hid_dim: [384]
+summary_hid_dim: [512]
 summary_out_dim: !ref <d_model>
 transformer_dropout: 0.1
 activation: !name:torch.nn.GELU
@@ -102,23 +105,9 @@ min_decode_ratio: 0.0
 max_decode_ratio: 1.0
 valid_search_interval: 10
 valid_beam_size: 10
-# test_beam_size: 80
+test_beam_size: 80
 ctc_weight_decode: 0.3
-
-# This setup works well for V100 32GB GPU, adapts it to your needs.
-# Or turn it off (but training speed will decrease)
-dynamic_batching: True
-max_batch_len: 400
-max_batch_len_val: 100 # we reduce it as the beam is much wider (VRAM)
-num_bucket: 200
-
-dynamic_batch_sampler:
-    max_batch_len: !ref <max_batch_len>
-    max_batch_len_val: !ref <max_batch_len_val>
-    num_buckets: !ref <num_bucket>
-    shuffle_ex: True # if true re-creates batches at each epoch shuffling examples.
-    batch_ordering: random
-    max_batch_ex: 128
+scorer_beam_scale: 0.3
 
 ############################## models ################################
 
@@ -176,17 +165,44 @@ Adam: !name:torch.optim.AdamW
     betas: (0.9, 0.98)
     eps: 0.000000001
 
-beam_searcher: !new:speechbrain.decoders.S2STransformerBeamSearch
-    modules: [!ref <Transformer>, !ref <seq_lin>, !ref <ctc_lin>]
-    bos_index: !ref <bos_index>
+SGD: !name:torch.optim.SGD
+    lr: !ref <lr_sgd>
+    momentum: 0.99
+    nesterov: True
+
+# Scorer
+ctc_scorer: !new:speechbrain.decoders.scorer.CTCScorer
     eos_index: !ref <eos_index>
     blank_index: !ref <blank_index>
+    ctc_fc: !ref <ctc_lin>
+
+scorer: !new:speechbrain.decoders.scorer.ScorerBuilder
+    full_scorers: [!ref <ctc_scorer>]
+    weights:
+        ctc: !ref <ctc_weight_decode>
+    scorer_beam_scale: !ref <scorer_beam_scale>
+
+valid_search: !new:speechbrain.decoders.S2STransformerBeamSearcher
+    modules: [!ref <Transformer>, !ref <seq_lin>]
+    bos_index: !ref <bos_index>
+    eos_index: !ref <eos_index>
     min_decode_ratio: !ref <min_decode_ratio>
     max_decode_ratio: !ref <max_decode_ratio>
     beam_size: !ref <valid_beam_size>
-    ctc_weight: !ref <ctc_weight_decode>
     using_eos_threshold: False
     length_normalization: True
+    scorer: !ref <scorer>
+
+test_search: !new:speechbrain.decoders.S2STransformerBeamSearcher
+    modules: [!ref <Transformer>, !ref <seq_lin>]
+    bos_index: !ref <bos_index>
+    eos_index: !ref <eos_index>
+    min_decode_ratio: !ref <min_decode_ratio>
+    max_decode_ratio: !ref <max_decode_ratio>
+    beam_size: !ref <test_beam_size>
+    temperature: 1.15
+    using_eos_threshold: True
+    scorer: !ref <scorer>
 
 log_softmax: !new:torch.nn.LogSoftmax
     dim: -1
@@ -201,7 +217,7 @@ seq_cost: !name:speechbrain.nnet.losses.kldiv_loss
 
 noam_annealing: !new:speechbrain.nnet.schedulers.NoamScheduler
     lr_initial: !ref <lr_adam>
-    n_warmup_steps: 25000 # We used 10000 for italian and Dutch
+    n_warmup_steps: 25000
 
 checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
     checkpoints_dir: !ref <save_folder>
@@ -218,17 +234,34 @@ normalize: !new:speechbrain.processing.features.InputNormalization
     norm_type: global
     update_until_epoch: 3
 
-augmentation: !new:speechbrain.lobes.augment.SpecAugment
-    time_warp: True
-    time_warp_window: 5
-    time_warp_mode: bicubic
-    freq_mask: True
-    n_freq_mask: 2
-    time_mask: True
-    n_time_mask: 2
-    replace_with_zero: False
-    freq_mask_width: 30
-    time_mask_width: 40
+############################## Augmentations ###################################
+
+# Time Drop
+time_drop: !new:speechbrain.augment.freq_domain.SpectrogramDrop
+    drop_length_low: 15
+    drop_length_high: 25
+    drop_count_low: 5
+    drop_count_high: 5
+
+# Frequency Drop
+freq_drop: !new:speechbrain.augment.freq_domain.SpectrogramDrop
+    drop_length_low: 25
+    drop_length_high: 35
+    drop_count_low: 2
+    drop_count_high: 2
+    dim: 2
+
+# Time warp
+time_warp: !new:speechbrain.augment.freq_domain.Warping
+
+fea_augment: !new:speechbrain.augment.augmenter.Augmenter
+    min_augmentations: 3
+    max_augmentations: 3
+    augment_prob: 1.0
+    augmentations: [
+        !ref <time_drop>,
+        !ref <freq_drop>,
+        !ref <time_warp>]
 
 compute_features: !new:speechbrain.lobes.features.Fbank
     sample_rate: !ref <sample_rate>
