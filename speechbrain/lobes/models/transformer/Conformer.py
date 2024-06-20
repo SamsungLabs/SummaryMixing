@@ -1,10 +1,18 @@
 """ SummaryMixing © 2023 by Samsung Electronics is licensed under CC BY-NC 4.0.
 
+This library contains SummaryMixing Conformer for supervised learning and self-supervised learning
+
+Usage: Install SpeechBrain
+       Copy this file under speechbrain/lobes/models/transformer
+
+SummaryMixing: https://arxiv.org/abs/2307.07421
+SummaryMixing SSL:
+
 Authors
--------
-* Jianyuan Zhong 2020
-* Samuele Cornell 2021
-* Sylvain de Langen 2023
+ * Titouan Parcollet 2023, 2024
+ * Shucong Zhang 2023, 2024
+ * Rogier van Dalen 2023, 2024
+ * Sourav Bhattacharya 2023, 2024
 """
 
 from dataclasses import dataclass
@@ -14,6 +22,7 @@ import torch.nn.functional as F
 from typing import Optional, List
 import speechbrain as sb
 import warnings
+import numpy as np 
 
 
 from speechbrain.nnet.attention import (
@@ -22,7 +31,7 @@ from speechbrain.nnet.attention import (
     PositionalwiseFeedForward,
 )
 from speechbrain.utils.dynamic_chunk_training import DynChunkTrainConfig
-from speechbrain.nnet.hypermixing import HyperMixing
+# from speechbrain.lobes.models.transformer.hypermixing import HyperMixing
 from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.nnet.activations import Swish
 from speechbrain.nnet.summary_mixing import SummaryMixing
@@ -31,10 +40,8 @@ from speechbrain.nnet.summary_mixing import SummaryMixing
 @dataclass
 class ConformerEncoderLayerStreamingContext:
     """Streaming metadata and state for a `ConformerEncoderLayer`.
-
     The multi-head attention and Dynamic Chunk Convolution require to save some
     left context that gets inserted as left padding.
-
     See :class:`.ConvolutionModule` documentation for further details.
     """
 
@@ -53,7 +60,6 @@ class ConformerEncoderLayerStreamingContext:
     dcconv_left_context: Optional[torch.Tensor] = None
     """Left context to insert at the left of the convolution according to the
     Dynamic Chunk Convolution method.
-
     Unlike `mha_left_context`, here the amount of frames to keep is fixed and
     inferred from the kernel size of the convolution module.
     """
@@ -69,7 +75,6 @@ class ConformerEncoderStreamingContext:
 
 class ConvolutionModule(nn.Module):
     """This is an implementation of convolution module in Conformer.
-
     Arguments
     ----------
     input_size : int
@@ -86,7 +91,6 @@ class ConvolutionModule(nn.Module):
          Whether the convolution should be causal or not.
     dilation: int, optional
          Dilation factor for the non bottleneck conv layer.
-
     Example
     -------
     >>> import torch
@@ -121,7 +125,9 @@ class ConvolutionModule(nn.Module):
         self.layer_norm = nn.LayerNorm(input_size)
         self.bottleneck = nn.Sequential(
             # pointwise
-            nn.Conv1d(input_size, 2 * input_size, kernel_size=1, stride=1, bias=bias),
+            nn.Conv1d(
+                input_size, 2 * input_size, kernel_size=1, stride=1, bias=bias
+            ),
             nn.GLU(dim=1),
         )
         # depthwise
@@ -154,7 +160,6 @@ class ConvolutionModule(nn.Module):
         dynchunktrain_config: Optional[DynChunkTrainConfig] = None,
     ):
         """Applies the convolution to an input tensor `x`.
-
         Arguments
         ---------
         x: torch.Tensor
@@ -318,7 +323,6 @@ class ConvolutionModule(nn.Module):
 
 class ConformerEncoderLayer(nn.Module):
     """This is an implementation of Conformer encoder layer.
-
     Arguments
     ----------
     d_model : int
@@ -355,7 +359,6 @@ class ConformerEncoderLayer(nn.Module):
         One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
         according to the definition of the article. "SummaryMixing-lite" removes the
         local project branch.
-
     Example
     -------
     >>> import torch
@@ -392,7 +395,11 @@ class ConformerEncoderLayer(nn.Module):
 
         if attention_type == "regularMHA":
             self.mha_layer = MultiheadAttention(
-                nhead=nhead, d_model=d_model, dropout=dropout, kdim=kdim, vdim=vdim,
+                nhead=nhead,
+                d_model=d_model,
+                dropout=dropout,
+                kdim=kdim,
+                vdim=vdim,
             )
         elif attention_type == "RelPosMHAXL":
             # transformerXL style positional encoding
@@ -429,7 +436,10 @@ class ConformerEncoderLayer(nn.Module):
         self.ffn_module1 = nn.Sequential(
             nn.LayerNorm(d_model),
             PositionalwiseFeedForward(
-                d_ffn=d_ffn, input_size=d_model, dropout=dropout, activation=activation,
+                d_ffn=d_ffn,
+                input_size=d_model,
+                dropout=dropout,
+                activation=activation,
             ),
             nn.Dropout(dropout),
         )
@@ -437,7 +447,10 @@ class ConformerEncoderLayer(nn.Module):
         self.ffn_module2 = nn.Sequential(
             nn.LayerNorm(d_model),
             PositionalwiseFeedForward(
-                d_ffn=d_ffn, input_size=d_model, dropout=dropout, activation=activation,
+                d_ffn=d_ffn,
+                input_size=d_model,
+                dropout=dropout,
+                activation=activation,
             ),
             nn.Dropout(dropout),
         )
@@ -480,7 +493,9 @@ class ConformerEncoderLayer(nn.Module):
         x = self.norm1(x)
 
         if self.attention_type == "SummaryMixing":
-            x = self.mha_layer(x, attention_mask=src_key_padding_mask)
+            x = self.mha_layer(
+                x, sum_mask=src_mask, src_padding_mask=src_key_padding_mask
+            )
             self_attn = None
         else:
             x, self_attn = self.mha_layer(
@@ -512,7 +527,6 @@ class ConformerEncoderLayer(nn.Module):
         time. Relies on a mutable context object as initialized by
         `make_streaming_context` that should be used across chunks.
         Invoked by `ConformerEncoder.forward_streaming`.
-
         Arguments
         ---------
         x : torch.Tensor
@@ -540,7 +554,9 @@ class ConformerEncoderLayer(nn.Module):
 
         # compute new MHA left context for the next call to our function
         if context.mha_left_context_size > 0:
-            context.mha_left_context = x[..., -context.mha_left_context_size :, :]
+            context.mha_left_context = x[
+                ..., -context.mha_left_context_size :, :
+            ]
 
         # multi-head attention module
         skip = x
@@ -549,7 +565,12 @@ class ConformerEncoderLayer(nn.Module):
             x = self.mha_layer(x, attention_mask=None)
         else:
             x, self_attn = self.mha_layer(
-                x, x, x, attn_mask=None, key_padding_mask=None, pos_embs=pos_embs,
+                x,
+                x,
+                x,
+                attn_mask=None,
+                key_padding_mask=None,
+                pos_embs=pos_embs,
             )
         x = x + skip
 
@@ -561,7 +582,9 @@ class ConformerEncoderLayer(nn.Module):
             x = torch.cat((context.dcconv_left_context, x), dim=1)
 
         # compute new DCConv left context for the next call to our function
-        context.dcconv_left_context = x[..., -self.convolution_module.padding :, :]
+        context.dcconv_left_context = x[
+            ..., -self.convolution_module.padding :, :
+        ]
 
         # convolution module
         x = x + self.convolution_module(x)
@@ -575,7 +598,6 @@ class ConformerEncoderLayer(nn.Module):
 
     def make_streaming_context(self, mha_left_context_size: int):
         """Creates a blank streaming context for this encoding layer.
-
         Arguments
         ---------
         mha_left_context_size : int
@@ -589,7 +611,6 @@ class ConformerEncoderLayer(nn.Module):
 
 class ConformerEncoder(nn.Module):
     """This class implements the Conformer encoder.
-
     Arguments
     ---------
     num_layers : int
@@ -628,8 +649,6 @@ class ConformerEncoder(nn.Module):
         One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
         according to the definition of the article. "SummaryMixing-lite" removes the
         local project branch.
-
-
     Example
     -------
     >>> import torch
@@ -659,6 +678,8 @@ class ConformerEncoder(nn.Module):
         local_proj_out_dim=512,
         summary_hid_dim=[1024],
         mode="SummaryMixing",
+        layerdrop_prob=0.0,
+        output_hidden_states=False,
     ):
         super().__init__()
 
@@ -686,6 +707,9 @@ class ConformerEncoder(nn.Module):
         )
         self.norm = LayerNorm(d_model, eps=1e-6)
         self.attention_type = attention_type
+        self.layerdrop_prob = layerdrop_prob
+        self.rng = np.random.default_rng()
+        self.output_hidden_states = output_hidden_states
 
     def forward(
         self,
@@ -720,17 +744,33 @@ class ConformerEncoder(nn.Module):
                 )
 
         output = src
+        if self.layerdrop_prob > 0.0:
+            keep_probs = self.rng.random(len(self.layers))
+        else:
+            keep_probs = None
         attention_lst = []
-        for enc_layer in self.layers:
-            output, attention = enc_layer(
-                output,
-                src_mask=src_mask,
-                src_key_padding_mask=src_key_padding_mask,
-                pos_embs=pos_embs,
-                dynchunktrain_config=dynchunktrain_config,
-            )
-            attention_lst.append(attention)
+        if self.output_hidden_states:
+            hidden_lst = []
+        for i, enc_layer in enumerate(self.layers):
+            if (
+                not self.training
+                or self.layerdrop_prob == 0.0
+                or keep_probs[i] > self.layerdrop_prob
+            ):
+                output, attention = enc_layer(
+                    output,
+                    src_mask=src_mask,
+                    src_key_padding_mask=src_key_padding_mask,
+                    pos_embs=pos_embs,
+                )
+                attention_lst.append(attention)
+                if self.output_hidden_states:
+                    hidden_lst.append(output)
         output = self.norm(output)
+
+        if self.output_hidden_states:
+            hidden_lst[-1] = output
+            return output, hidden_lst, attention_lst
 
         return output, attention_lst
 
@@ -744,7 +784,6 @@ class ConformerEncoder(nn.Module):
         DynamicChunkTraining-trained models), which is to be used at inference
         time. Relies on a mutable context object as initialized by
         `make_streaming_context` that should be used across chunks.
-
         Arguments
         ---------
         src : torch.Tensor
@@ -775,7 +814,6 @@ class ConformerEncoder(nn.Module):
 
     def make_streaming_context(self, mha_left_context_size: int):
         """Creates a blank streaming context for the encoder.
-
         Arguments
         ---------
         mha_left_context_size : int
@@ -795,7 +833,6 @@ class ConformerEncoder(nn.Module):
 
 class ConformerDecoderLayer(nn.Module):
     """This is an implementation of Conformer encoder layer.
-
     Arguments
     ----------
     d_model : int
@@ -820,7 +857,6 @@ class ConformerDecoderLayer(nn.Module):
         Whether the convolutions should be causal or not.
     attention_type: str, optional
         type of attention layer, e.g. regulaMHA for regular MultiHeadAttention.
-
     Example
     -------
     >>> import torch
@@ -855,7 +891,11 @@ class ConformerDecoderLayer(nn.Module):
 
         if attention_type == "regularMHA":
             self.mha_layer = MultiheadAttention(
-                nhead=nhead, d_model=d_model, dropout=dropout, kdim=kdim, vdim=vdim,
+                nhead=nhead,
+                d_model=d_model,
+                dropout=dropout,
+                kdim=kdim,
+                vdim=vdim,
             )
         elif attention_type == "RelPosMHAXL":
             # transformerXL style positional encoding
@@ -873,7 +913,10 @@ class ConformerDecoderLayer(nn.Module):
         self.ffn_module1 = nn.Sequential(
             nn.LayerNorm(d_model),
             PositionalwiseFeedForward(
-                d_ffn=d_ffn, input_size=d_model, dropout=dropout, activation=activation,
+                d_ffn=d_ffn,
+                input_size=d_model,
+                dropout=dropout,
+                activation=activation,
             ),
             nn.Dropout(dropout),
         )
@@ -881,7 +924,10 @@ class ConformerDecoderLayer(nn.Module):
         self.ffn_module2 = nn.Sequential(
             nn.LayerNorm(d_model),
             PositionalwiseFeedForward(
-                d_ffn=d_ffn, input_size=d_model, dropout=dropout, activation=activation,
+                d_ffn=d_ffn,
+                input_size=d_model,
+                dropout=dropout,
+                activation=activation,
             ),
             nn.Dropout(dropout),
         )
@@ -944,7 +990,6 @@ class ConformerDecoderLayer(nn.Module):
 
 class ConformerDecoder(nn.Module):
     """This class implements the Transformer decoder.
-
     Arguments
     ----------
     num_layers: int
@@ -971,8 +1016,6 @@ class ConformerDecoder(nn.Module):
         Whether the convolutions should be causal or not.
     attention_type: str, optional
         type of attention layer, e.g. regulaMHA for regular MultiHeadAttention.
-
-
     Example
     -------
     >>> src = torch.rand((8, 60, 512))
@@ -1049,7 +1092,6 @@ class ConformerDecoder(nn.Module):
             Module or tensor containing the target sequence positional embeddings for each attention layer.
         pos_embs_src: torch.Tensor, torch.nn.Module, optional
             Module or tensor containing the source sequence positional embeddings for each attention layer.
-
         """
         output = tgt
         self_attns, multihead_attns = [], []
