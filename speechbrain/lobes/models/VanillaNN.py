@@ -7,10 +7,10 @@ Usage: Install SpeechBrain and copy this file under speechbrain/lobes/models/
 Source: https://arxiv.org/abs/2307.07421
 
 Authors
- * Titouan Parcollet 2023
- * Shucong Zhang 2023
- * Rogier van Dalen 2023
- * Sourav Bhattacharya 2023
+ * Titouan Parcollet 2023, 2024
+ * Shucong Zhang 2023, 2024
+ * Rogier van Dalen 2023, 2024
+ * Sourav Bhattacharya 2023, 2024
 """
 import torch
 import math
