@@ -12,11 +12,14 @@ Authors
  * Rogier van Dalen 2023
  * Sourav Bhattacharya 2023
 """
-import torch
+
 import math
-from torch import nn
-import speechbrain as sb
 from typing import Optional
+
+import torch
+from torch import nn
+
+import speechbrain as sb
 from speechbrain.nnet.containers import Sequential
 
 
@@ -24,7 +27,7 @@ class ParallelLinear(torch.nn.Module):
     """Computes a parallel linear transformation y = wx + b.
     In practice the input and the output are split n_split times.
     Hence we create n_split parallel linear op that will operate on
-    each splited dimension. E.g. if x = [B,T,F] and n_split = 4
+    each split dimension. E.g. if x = [B,T,F] and n_split = 4
     then x = [B,T,4,F/4] and W = [4,F/4,out_dim/4].
 
     Arguments
@@ -119,6 +122,8 @@ class VanillaNN(Sequential):
 
     Arguments
     ---------
+    input_shape : tuple
+        Expected shape of the input tensors.
     activation : torch class
         A class used for constructing the activation layers.
     dnn_blocks : int
@@ -132,7 +137,7 @@ class VanillaNN(Sequential):
         The number of split to create n_split linear transformations.
         In practice the input and the output are split n_split times.
         Hence we create n_split parallel linear op that will operate on
-        each splited dimension. E.g. if x = [B,T,F] and n_split = 4
+        each split dimension. E.g. if x = [B,T,F] and n_split = 4
         then x = [B,T,4,F/4] and W = [4,F/4,out_dim/4]. This will happen
         in each layer of the VanillaNN.
 
