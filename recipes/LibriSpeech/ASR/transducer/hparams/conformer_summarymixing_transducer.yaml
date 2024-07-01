@@ -47,7 +47,7 @@ ckpt_interval_minutes: 5 # save checkpoint every N min
 # Empirically, we found that this value should be >= 128.
 # Please, set your parameters accordingly.
 number_of_epochs: 100
-optimizer_step_limit: 90000
+optimizer_step_limit: 900000
 warmup_steps: 25000
 num_workers: 4
 batch_size_valid: 4
@@ -142,7 +142,7 @@ dec_dropout: 0.1
 attention_type: SummaryMixing # SummaryMixing, regularMHA or RelPosMHAXL
 mode: SummaryMixing-fast # SummaryMixing or SummaryMixing-lite
 local_proj_hid_dim: [512]
-local_proj_out_dim: 256
+local_proj_out_dim: 512
 summary_hid_dim: [512]
 
 # Decoding parameters
