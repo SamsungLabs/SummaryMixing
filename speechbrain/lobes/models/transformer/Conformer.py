@@ -1,4 +1,4 @@
-"""Conformer implementation.
+""" SummaryMixing © 2023 by Samsung Electronics is licensed under CC BY-NC 4.0.
 
 Authors
 -------
@@ -26,7 +26,6 @@ from speechbrain.nnet.hypermixing import HyperMixing
 from speechbrain.nnet.normalization import LayerNorm
 from speechbrain.nnet.summary_mixing import SummaryMixing
 from speechbrain.utils.dynamic_chunk_training import DynChunkTrainConfig
-
 
 @dataclass
 class ConformerEncoderLayerStreamingContext:
@@ -568,6 +567,7 @@ class ConformerEncoderLayer(nn.Module):
             List of self attention values.
         """
 
+
         orig_len = x.shape[-2]
         # ffn module
         x = x + 0.5 * self.ffn_module1(x)
@@ -589,10 +589,14 @@ class ConformerEncoderLayer(nn.Module):
         # multi-head attention module
         skip = x
         x = self.norm1(x)
-
-        x, self_attn = self.mha_layer(
-            x, x, x, attn_mask=None, key_padding_mask=None, pos_embs=pos_embs,
-        )
+        
+        if self.attention_type == "SummaryMixing":
+            x = self.mha_layer(x, attention_mask=None)
+        else:
+            x, self_attn = self.mha_layer(
+                x, x, x, attn_mask=None, key_padding_mask=None, pos_embs=pos_embs,
+            )
+            
         x = x + skip
 
         # truncate outputs corresponding to the MHA left context (we only care
@@ -627,6 +631,7 @@ class ConformerEncoderLayer(nn.Module):
         Returns
         -------
         ConformerEncoderLayerStreamingContext
+
         """
         return ConformerEncoderLayerStreamingContext(
             mha_left_context_size=mha_left_context_size
@@ -828,6 +833,7 @@ class ConformerEncoder(nn.Module):
         return output, attention_lst
 
     def make_streaming_context(self, dynchunktrain_config: DynChunkTrainConfig):
+
         """Creates a blank streaming context for the encoder.
 
         Arguments
@@ -1123,6 +1129,7 @@ class ConformerDecoder(nn.Module):
             Location of self attentions.
         multihead_attns : list
             Location of multihead attentions.
+
         """
         output = tgt
         self_attns, multihead_attns = [], []
