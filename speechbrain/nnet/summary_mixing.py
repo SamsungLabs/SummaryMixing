@@ -238,7 +238,7 @@ class SummaryMixing(nn.Module):
             )
 
         return self.summary_local_merging(
-            torch.cat([local_summary, time_summary], dim=-1)
+            self.dropout(torch.cat([local_summary, time_summary], dim=-1))
         )
 
     def _forward_mixing_fast(self, x, sum_mask, src_padding_mask):
