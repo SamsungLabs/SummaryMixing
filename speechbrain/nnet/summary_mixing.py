@@ -58,9 +58,10 @@ class SummaryMixing(nn.Module):
     global_dropout: float, optional
         Amount of dropout applied when concatenating  the local and summary.
     mode: string, optional
-        One of "SummaryMixing", "SummaryMixing-lite" or "SummaryMixing-expdecay". Changes the SummaryMixing cell
+        One of "SummaryMixing", "SummaryMixing-lite" or "SummaryMixing-fast". Changes the SummaryMixing cell
         according to the definition of the article. "SummaryMixing-lite" removes the
-        local project branch.
+        local project branch. "SummaryMixing-expdecay" is another alternative using
+        an exponential decay for the window, it's slower.
 
 
     Example
@@ -93,7 +94,7 @@ class SummaryMixing(nn.Module):
             "SummaryMixing-fast",
         ]:
             raise ValueError(
-                "The SummaryMixing mode should either be 'SummaryMixing' or 'SummaryMixing-lite'"
+                "The SummaryMixing mode should either be 'SummaryMixing', 'SummaryMixing-lite', 'SummaryMixing-fast' or 'SummaryMixing-expdecay'"
             )
 
         self.local_proj_hid_dim = local_proj_hid_dim
@@ -143,8 +144,6 @@ class SummaryMixing(nn.Module):
                 dnn_neurons=[summary_out_dim],
                 activation=activation,
             )
-
-            # self.summary_norm = nn.LayerNorm(summary_out_dim)
 
         else:
             self.summary_proj = VanillaNN(
@@ -234,7 +233,8 @@ class SummaryMixing(nn.Module):
             # full_mask_with_pad = torch.matmul(sum_mask, src_padding_mask)
 
             time_summary = self.summary_norm(
-                torch.matmul(time_summary.mT, sum_mask.T).mT
+                torch.matmul(sum_mask, time_summary)
+                / torch.sum(sum_mask, dim=1).unsqueeze(-1)
             )
 
         return self.summary_local_merging(

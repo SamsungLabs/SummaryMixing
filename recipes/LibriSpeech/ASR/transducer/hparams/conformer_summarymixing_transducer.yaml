@@ -47,7 +47,7 @@ ckpt_interval_minutes: 5 # save checkpoint every N min
 # Empirically, we found that this value should be >= 128.
 # Please, set your parameters accordingly.
 number_of_epochs: 100
-optimizer_step_limit: 900000
+optimizer_step_limit: 210000
 warmup_steps: 25000
 num_workers: 4
 batch_size_valid: 4
