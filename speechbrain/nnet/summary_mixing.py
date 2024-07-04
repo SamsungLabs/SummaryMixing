@@ -126,9 +126,6 @@ class SummaryMixing(nn.Module):
                 activation=activation,
             )
 
-            self.local_norm = nn.LayerNorm(local_proj_out_dim)
-            self.summary_norm = nn.LayerNorm(summary_out_dim)
-
         if self.mode == "SummaryMixing-fast":
             self.global_proj = VanillaNN(
                 input_shape=[None, None, enc_dim],
@@ -207,7 +204,7 @@ class SummaryMixing(nn.Module):
         B, T, F = x.shape
 
         # f() (Eq. 1b)
-        local_summary = self.local_norm(self.local_proj(x) * src_padding_mask)
+        local_summary = self.local_proj(x) * src_padding_mask
 
         # s() (Eq. 2 and 1c)
         time_summary = self.summary_proj(x) * src_padding_mask
@@ -218,9 +215,10 @@ class SummaryMixing(nn.Module):
         if sum_mask is None:
 
             # We normalise by real length by counting masking
-            time_summary = self.summary_norm(
-                torch.sum(time_summary, dim=1) / torch.sum(src_padding_mask, dim=1)
+            time_summary = torch.sum(time_summary, dim=1) / torch.sum(
+                src_padding_mask, dim=1
             )
+
             time_summary = time_summary.unsqueeze(1).repeat(1, T, 1)
 
         else:
@@ -232,10 +230,9 @@ class SummaryMixing(nn.Module):
 
             # full_mask_with_pad = torch.matmul(sum_mask, src_padding_mask)
 
-            time_summary = self.summary_norm(
-                torch.matmul(sum_mask, time_summary)
-                / torch.sum(sum_mask, dim=1).unsqueeze(-1)
-            )
+            time_summary = torch.matmul(sum_mask, time_summary) / torch.sum(
+                sum_mask, dim=1
+            ).unsqueeze(-1)
 
         return self.summary_local_merging(
             self.dropout(torch.cat([local_summary, time_summary], dim=-1))
