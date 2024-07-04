@@ -190,7 +190,6 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.Transforme
    normalize_before: True
    causal: False
    max_length: 6000 # For absolute positional encoding
-   masked_false_or_true: False
 
 # We must call an encoder wrapper so the decoder isn't run (we don't have any)
 enc: !new:speechbrain.lobes.models.transformer.TransformerASR.EncoderWrapper

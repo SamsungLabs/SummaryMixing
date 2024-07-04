@@ -271,7 +271,6 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.Transforme
    mode: !ref <mode>
    normalize_before: True
    causal: False
-   masked_false_or_true: False
 
 # We must call an encoder wrapper so the decoder isn't run (we don't have any)
 enc: !new:speechbrain.lobes.models.transformer.TransformerASR.EncoderWrapper
