@@ -75,62 +75,39 @@ def make_transformer_src_mask(
         assert dynchunktrain_config is None
         return get_lookahead_mask(src)
 
-    if dynchunktrain_config is not None:
-        # init a mask that masks nothing by default
-        # 0 == no mask, 1 == mask
+    if dynchunktrain_config is None:
+        return
+
+    # The following is not really the sole source used to implement this,
+    # but it helps introduce the concept.
+    # ref: Unified Streaming and Non-streaming Two-pass End-to-end Model for Speech Recognition
+    # https://arxiv.org/pdf/2012.05481.pdf
+    timesteps = src.size(1)
+
+    # Mask the future at the right of each chunk
+    chunk_size = dynchunktrain_config.chunk_size
+    num_chunks = timesteps // chunk_size
+    timestep_idx = torch.arange(timesteps, device=src.device)
+    mask_idx = torch.arange(
+        chunk_size, chunk_size * (num_chunks + 2), chunk_size, device=src.device
+    ).repeat_interleave(chunk_size)[:timesteps]
+
+    if masked_false_or_true:
+        src_mask = timestep_idx[None] >= mask_idx[:, None]
+    else:
+        src_mask = timestep_idx[None] < mask_idx[:, None]
+
+    # Mask the past at the left of each chunk (accounting for left context)
+    # only relevant if using left context
+    if not dynchunktrain_config.is_infinite_left_context():
+        num_left_chunks = dynchunktrain_config.left_context_size
+        mask_idx -= chunk_size * (num_left_chunks + 1)
         if masked_false_or_true:
-            src_mask = torch.zeros(
-                (src.shape[1], src.shape[1]), device=src.device, dtype=torch.bool,
-            )
+            src_mask += timestep_idx[None] < mask_idx[:, None]
         else:
-            src_mask = torch.ones(
-                (src.shape[1], src.shape[1]), device=src.device, dtype=torch.bool,
-            )
+            src_mask *= timestep_idx[None] >= mask_idx[:, None]
 
-        # The following is not really the sole source used to implement this,
-        # but it helps introduce the concept.
-        # ref: Unified Streaming and Non-streaming Two-pass End-to-end Model
-        # for Speech Recognition
-        # https://arxiv.org/pdf/2012.05481.pdf
-
-        timesteps = src.size(1)
-
-        # mask the future at the right of each chunk
-        for t in range(timesteps):
-            # if we have a chunk size of 8 then:
-            # for 0..7  -> mask 8..
-            # for 8..15 -> mask 16..
-            # etc.
-            next_chunk_index = (t // dynchunktrain_config.chunk_size) + 1
-            visible_range = next_chunk_index * dynchunktrain_config.chunk_size
-            if masked_false_or_true:
-                src_mask[t, visible_range:] = True
-            else:
-                src_mask[t, visible_range:] = False
-
-        # mask the past at the left of each chunk (accounting for left context)
-        # only relevant if using left context
-        if not dynchunktrain_config.is_infinite_left_context():
-            for t in range(timesteps):
-                chunk_index = t // dynchunktrain_config.chunk_size
-                chunk_first_t = chunk_index * dynchunktrain_config.chunk_size
-
-                left_context_frames = (
-                    dynchunktrain_config.left_context_size
-                    * dynchunktrain_config.chunk_size
-                )
-
-                frame_remaining_context = max(0, chunk_first_t - left_context_frames,)
-
-                # end range is exclusive, so there is no off-by-one here
-                if masked_false_or_true:
-                    src_mask[t, :frame_remaining_context] = True
-                else:
-                    src_mask[t, :frame_remaining_context] = False
-
-        return src_mask
-
-    return None
+    return src_mask
 
 
 def make_transformer_src_tgt_masks(
@@ -363,7 +340,11 @@ class TransformerASR(TransformerInterface):
 
         self.num_decoder_layers = num_decoder_layers
         self.num_encoder_layers = num_encoder_layers
-        self.masked_false_or_true = masked_false_or_true
+
+        if attention_type == "SummaryMixing":
+            self.masked_false_or_true = False
+        else:
+            self.masked_false_or_true = masked_false_or_true
 
         self.custom_src_module = ModuleList(
             Linear(
@@ -449,6 +430,12 @@ class TransformerASR(TransformerInterface):
             tgt = tgt + self.positional_encoding(tgt)
             pos_embs_target = None
             pos_embs_encoder = None
+
+        # This was added for SummaryMixing. Masks need to be False and not True
+        # For SummaryMixing, so we revert here again as the decoder expects the
+        # opposite.
+        if not self.masked_false_or_true:
+            src_key_padding_mask = torch.logical_not(src_key_padding_mask)
 
         decoder_out, _, _ = self.decoder(
             tgt=tgt,
