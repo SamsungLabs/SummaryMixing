@@ -1,13 +1,30 @@
 # SummaryMixing for SpeechBrain v1.0
 *Halve your VRAM requirements and train 30% faster any speech model achieving equivalents or better Word Error Rates and SLU accuracies with SummaryMixing Conformers and Branchformers.*
 
-## !! A word about using SummaryMixing with SpeechBrain V1.0 !!
-
-The main branch of this repository will keep tracking the latest version of SpeechBrain available. Unfortunately the results reported in our [publication](https://arxiv.org/abs/2307.07421) and bellow in the Table were obtained with SpeechBrain v0.5 and may not be exactly reproduced with the current code. If you want the exact same results, please use our dedicated
-[branch](https://github.com/SamsungLabs/SummaryMixing/tree/speechbrain_v0.5) that contains the code compatible with SpeechBrain v0.5!
+*Reduce your self-supervised learning (SSL) pre-training time and VRAM requirements by 20%-30% with equivalents or better downstream performan on speech processing tasks.*
 
 ## In brief
-This repository implements SummaryMixing, a simpler, faster and much cheaper replacement to self-attention in Conformers and Branchformers for automatic speech recognition, keyword spotting and intent classification (see: the [publication](https://arxiv.org/abs/2307.07421) for further details). The code is fully compatible with the [SpeechBrain](https://speechbrain.github.io/) toolkit with version 0.5 -- copy and paste is all you need to start using SummaryMixing in your setup. If you wish to run with the latest version of SpeechBrain (v1.0+), please go to the main branch of this repository. SummaryMixing is the first alternative to MHSA able to beat it on speech tasks while reducing its complexity significantly (from quadratic to linear).
+SummaryMixing is the first alternative to MHSA able to beat it on speech tasks while reducing its complexity significantly (from quadratic to linear).
+
+This repository implements SummaryMixing, a simpler, faster and much cheaper replacement to self-attention in Conformers and Branchformers for automatic speech recognition, keyword spotting and intent classification (see: the [publication](https://arxiv.org/abs/2307.07421) for further details). 
+
+This repository also implements SummaryMixing for SSL pre-training (see: the [publication](https://arxiv.org/pdf/2407.13377) for further details) and streaming transducer.
+
+The code is fully compatible with the [SpeechBrain](https://speechbrain.github.io/) toolkit -- copy and paste is all you need to start using SummaryMixing in your setup.
+
+## !! A word about using SummaryMixing with SpeechBrain V1.0 !!
+
+The main branch of this repository will keep tracking the latest version of SpeechBrain available. The results for SSL in our [publication](https://arxiv.org/pdf/2407.13377) and the streaming transducer were obtained with SpeechBrain v1.0. For the Conformer attention-CTC models with SpeechBrain v1.0, below are the results: 
+
+| Encoder | Variant     | Dev-clean | Test-clean | Test-other |
+|------------------|----------------------|--------------------|---------------------|---------------------|
+|                  |                      | **WER \%**    |   **WER \%**  |   **WER \%**   | **hours** | **GB**   |
+| Conformer       | Self-attention                 | 1.9                | 2.0                 | 4.6                 | 
+| Conformer      | SummaryMixing      | 1.9                 | 2.0                | 4.6            | 
+
+Unfortunately the results reported in our [publication](https://arxiv.org/abs/2307.07421) and bellow in the Table were obtained with SpeechBrain v0.5 and may not be exactly reproduced with the current code. If you want the exact same results, please use our dedicated
+[branch](https://github.com/SamsungLabs/SummaryMixing/tree/speechbrain_v0.5) that contains the code compatible with SpeechBrain v0.5!
+
 
 ## A glance at SummaryMixing
 
@@ -44,12 +61,22 @@ Please cite SummaryMixing as follows:
 ```bibtex
 @misc{summarymixing,
   title={{SummaryMixing}: A Linear-Complexity Alternative to Self-Attention for Speech Recognition and Understanding},
-  author={Titouan Parcollet and Rogier van Dalen and and Shucong Zhang and Sourav Bhattacharya},
+  author={Titouan Parcollet and Rogier van Dalen and Shucong Zhang and Sourav Bhattacharya},
   year={2023},
   eprint={2307.07421},
   archivePrefix={arXiv},
   primaryClass={eess.AS},
   note={arXiv:2307.07421}
+}
+
+@misc{linear_ssl,
+  title={Linear-Complexity Self-Supervised Learning for Speech Processing},
+  author={Shucong Zhang and Titouan Parcollet and Rogier van Dalen and Sourav Bhattacharya},
+  year={2024},
+  eprint={2407.13377},
+  archivePrefix={arXiv},
+  primaryClass={eess.AS},
+  note={arXiv:2407.13377}
 }
 ```
 
