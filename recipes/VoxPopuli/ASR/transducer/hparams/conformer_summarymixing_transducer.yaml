@@ -187,6 +187,7 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.Transforme
    local_proj_out_dim: !ref <local_proj_out_dim>
    summary_hid_dim: !ref <summary_hid_dim>
    mode: !ref <mode>
+   use_layernorm: False
    normalize_before: True
    causal: False
    max_length: 6000 # For absolute positional encoding

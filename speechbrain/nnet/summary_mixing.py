@@ -62,6 +62,8 @@ class SummaryMixing(nn.Module):
         according to the definition of the article. "SummaryMixing-lite" removes the
         local project branch. "SummaryMixing-expdecay" is another alternative using
         an exponential decay for the window, it's slower.
+    use_layernorm: bool, optional
+        Using layernorm for the local and the global branch in SummaryMixing or not.
 
 
     Example
@@ -84,6 +86,7 @@ class SummaryMixing(nn.Module):
         activation: Optional[nn.Module] = nn.GELU,
         global_dropout: Optional[float] = 0.1,
         mode: Optional[str] = "SummaryMixing",
+        use_layernorm: Optional[bool] = True,
     ):
         super(SummaryMixing, self).__init__()
 
@@ -107,6 +110,7 @@ class SummaryMixing(nn.Module):
         self.local_dnn_blocks = local_proj_hid_dim + [local_proj_out_dim]
         self.summary_dnn_blocks = summary_hid_dim + [summary_out_dim]
         self.mode = mode
+        self.use_layernorm = use_layernorm
         self.dropout = nn.Dropout(global_dropout)
 
         if self.mode == "SummaryMixing" or self.mode == "SummaryMixing-expdecay":
@@ -155,6 +159,10 @@ class SummaryMixing(nn.Module):
             self.decay_constant = nn.Parameter(
                 data=torch.tensor(0.995), requires_grad=False
             )
+
+        if self.use_layernorm:
+            self.local_norm = nn.LayerNorm(local_proj_out_dim)
+            self.summary_norm = nn.LayerNorm(summary_out_dim)
 
         self.apply(self._init_parameters)
 
@@ -206,6 +214,9 @@ class SummaryMixing(nn.Module):
         # f() (Eq. 1b)
         local_summary = self.local_proj(x) * src_padding_mask
 
+        if self.use_layernorm:
+            local_summary = self.local_norm(local_summary)
+
         # s() (Eq. 2 and 1c)
         time_summary = self.summary_proj(x) * src_padding_mask
 
@@ -233,6 +244,9 @@ class SummaryMixing(nn.Module):
             time_summary = torch.matmul(sum_mask, time_summary) / torch.sum(
                 sum_mask, dim=1
             ).unsqueeze(-1)
+
+        if self.use_layernorm:
+            time_summary = self.summary_norm(time_summary)
 
         return self.summary_local_merging(
             self.dropout(torch.cat([local_summary, time_summary], dim=-1))
