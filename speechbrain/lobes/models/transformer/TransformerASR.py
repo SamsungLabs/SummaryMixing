@@ -261,6 +261,8 @@ class TransformerASR(TransformerInterface):
         One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
         according to the definition of the article. "SummaryMixing-lite" removes the
         local project branch.
+    use_layernorm: bool, optional
+        Using layernorm for the local and the global branch in SummaryMixing or not.
     masked_false_or_true: bool
         If True, masked elements will be set to True, False otherwise.
 
@@ -307,6 +309,7 @@ class TransformerASR(TransformerInterface):
         summary_hid_dim: Optional[list] = [1024],
         summary_out_dim: Optional[int] = 1024,
         mode: Optional[str] = "SummaryMixing",
+        use_layernorm: Optional[bool] = True,
         masked_false_or_true: Optional[bool] = True,
     ):
         super().__init__(
@@ -335,6 +338,7 @@ class TransformerASR(TransformerInterface):
             summary_hid_dim=summary_hid_dim,
             summary_out_dim=summary_out_dim,
             mode=mode,
+            use_layernorm=use_layernorm,
             masked_false_or_true=masked_false_or_true,
         )
 
