@@ -317,7 +317,9 @@ class BranchformerEncoderLayer(nn.Module):
         x = self.norm_mhsa(x)
 
         if self.attention_type == "SummaryMixing":
-            x = self.mha_layer(x, attention_mask=src_key_padding_mask)
+            x = self.mha_layer(
+                x, sum_mask=src_mask, src_padding_mask=src_key_padding_mask
+            )
             self_attn = None
         else:
             x, self_attn = self.mha_layer(

@@ -12,20 +12,23 @@ Authors
  * Rogier van Dalen 2023
  * Sourav Bhattacharya 2023
 """
+
 from dataclasses import dataclass
+from typing import Any, Optional
+
 import torch  # noqa 42
 from torch import nn
-from typing import Any, Optional
-from speechbrain.nnet.linear import Linear
-from speechbrain.nnet.containers import ModuleList
+
+from speechbrain.dataio.dataio import length_to_mask
 from speechbrain.lobes.models.transformer.Transformer import (
-    TransformerInterface,
-    get_lookahead_mask,
-    get_key_padding_mask,
     NormalizedEmbedding,
+    TransformerInterface,
+    get_key_padding_mask,
+    get_lookahead_mask,
 )
 from speechbrain.nnet.activations import Swish
-from speechbrain.dataio.dataio import length_to_mask
+from speechbrain.nnet.containers import ModuleList
+from speechbrain.nnet.linear import Linear
 from speechbrain.utils.dynamic_chunk_training import DynChunkTrainConfig
 
 
@@ -47,23 +50,23 @@ class TransformerASRStreamingContext:
 def make_transformer_src_mask(
     src: torch.Tensor,
     causal: bool = False,
+    masked_false_or_true: bool = True,
     dynchunktrain_config: Optional[DynChunkTrainConfig] = None,
 ) -> Optional[torch.Tensor]:
     """Prepare the source transformer mask that restricts which frames can
     attend to which frames depending on causal or other simple restricted
     attention methods.
-
     Arguments
     ---------
     src: torch.Tensor
         The source tensor to build a mask from. The contents of the tensor are
         not actually used currently; only its shape and other metadata (e.g.
         device).
-
+    masked_false_or_true: bool
+        If True, masked elements will be set to True, False otherwise.
     causal: bool
         Whether strict causality shall be used. Frames will not be able to
         attend to any future frame.
-
     dynchunktrain_config: DynChunkTrainConfig, optional
         Dynamic Chunk Training configuration. This implements a simple form of
         chunkwise attention. Incompatible with `causal`."""
@@ -72,51 +75,39 @@ def make_transformer_src_mask(
         assert dynchunktrain_config is None
         return get_lookahead_mask(src)
 
-    if dynchunktrain_config is not None:
-        # init a mask that masks nothing by default
-        # 0 == no mask, 1 == mask
-        src_mask = torch.zeros(
-            (src.shape[1], src.shape[1]), device=src.device, dtype=torch.bool,
-        )
+    if dynchunktrain_config is None:
+        return
 
-        # The following is not really the sole source used to implement this,
-        # but it helps introduce the concept.
-        # ref: Unified Streaming and Non-streaming Two-pass End-to-end Model
-        # for Speech Recognition
-        # https://arxiv.org/pdf/2012.05481.pdf
+    # The following is not really the sole source used to implement this,
+    # but it helps introduce the concept.
+    # ref: Unified Streaming and Non-streaming Two-pass End-to-end Model for Speech Recognition
+    # https://arxiv.org/pdf/2012.05481.pdf
+    timesteps = src.size(1)
 
-        timesteps = src.size(1)
+    # Mask the future at the right of each chunk
+    chunk_size = dynchunktrain_config.chunk_size
+    num_chunks = timesteps // chunk_size
+    timestep_idx = torch.arange(timesteps, device=src.device)
+    mask_idx = torch.arange(
+        chunk_size, chunk_size * (num_chunks + 2), chunk_size, device=src.device
+    ).repeat_interleave(chunk_size)[:timesteps]
 
-        # mask the future at the right of each chunk
-        for t in range(timesteps):
-            # if we have a chunk size of 8 then:
-            # for 0..7  -> mask 8..
-            # for 8..15 -> mask 16..
-            # etc.
-            next_chunk_index = (t // dynchunktrain_config.chunk_size) + 1
-            visible_range = next_chunk_index * dynchunktrain_config.chunk_size
-            src_mask[t, visible_range:] = True
+    if masked_false_or_true:
+        src_mask = timestep_idx[None] >= mask_idx[:, None]
+    else:
+        src_mask = timestep_idx[None] < mask_idx[:, None]
 
-        # mask the past at the left of each chunk (accounting for left context)
-        # only relevant if using left context
-        if not dynchunktrain_config.is_infinite_left_context():
-            for t in range(timesteps):
-                chunk_index = t // dynchunktrain_config.chunk_size
-                chunk_first_t = chunk_index * dynchunktrain_config.chunk_size
+    # Mask the past at the left of each chunk (accounting for left context)
+    # only relevant if using left context
+    if not dynchunktrain_config.is_infinite_left_context():
+        num_left_chunks = dynchunktrain_config.left_context_size
+        mask_idx -= chunk_size * (num_left_chunks + 1)
+        if masked_false_or_true:
+            src_mask += timestep_idx[None] < mask_idx[:, None]
+        else:
+            src_mask *= timestep_idx[None] >= mask_idx[:, None]
 
-                left_context_frames = (
-                    dynchunktrain_config.left_context_size
-                    * dynchunktrain_config.chunk_size
-                )
-
-                frame_remaining_context = max(0, chunk_first_t - left_context_frames,)
-
-                # end range is exclusive, so there is no off-by-one here
-                src_mask[t, :frame_remaining_context] = True
-
-        return src_mask
-
-    return None
+    return src_mask
 
 
 def make_transformer_src_tgt_masks(
@@ -125,35 +116,57 @@ def make_transformer_src_tgt_masks(
     wav_len=None,
     pad_idx=0,
     causal: bool = False,
+    masked_false_or_true: bool = True,
     dynchunktrain_config: Optional[DynChunkTrainConfig] = None,
 ):
     """This function generates masks for training the transformer model,
-    opiniated for an ASR context with encoding masks and, optionally, decoding
+    opinionated for an ASR context with encoding masks and, optionally, decoding
     masks (if specifying `tgt`).
 
     Arguments
     ---------
-    src : tensor
+    src : torch.Tensor
         The sequence to the encoder (required).
-    tgt : tensor
+    tgt : torch.Tensor
         The sequence to the decoder.
+    wav_len : torch.Tensor
+        The lengths of the inputs.
     pad_idx : int
         The index for <pad> token (default=0).
     causal: bool
         Whether strict causality shall be used. See `make_asr_src_mask`
+    masked_false_or_true: bool
+        If True, masked elements will be set to True, False otherwise.
     dynchunktrain_config: DynChunkTrainConfig, optional
         Dynamic Chunk Training configuration. See `make_asr_src_mask`
+
+    Returns
+    -------
+    src_key_padding_mask : torch.Tensor
+        Key padding mask for ignoring padding
+    tgt_key_padding_mask : torch.Tensor
+        Key padding mask for ignoring padding
+    src_mask : torch.Tensor
+        Mask for ignoring invalid (e.g. future) timesteps
+    tgt_mask : torch.Tensor
+        Mask for ignoring invalid (e.g. future) timesteps
     """
     src_key_padding_mask = None
 
     # mask out audio beyond the length of audio for each batch
     if wav_len is not None:
         abs_len = torch.round(wav_len * src.shape[1])
-        src_key_padding_mask = ~length_to_mask(abs_len).bool()
+        if masked_false_or_true:
+            src_key_padding_mask = ~length_to_mask(abs_len).bool()
+        else:
+            src_key_padding_mask = length_to_mask(abs_len).bool()
 
     # mask out the source
     src_mask = make_transformer_src_mask(
-        src, causal=causal, dynchunktrain_config=dynchunktrain_config
+        src,
+        causal=causal,
+        masked_false_or_true=masked_false_or_true,
+        dynchunktrain_config=dynchunktrain_config,
     )
 
     # If no decoder in the transformer...
@@ -174,7 +187,7 @@ class TransformerASR(TransformerInterface):
     https://arxiv.org/pdf/1706.03762.pdf
 
     Arguments
-    ----------
+    ---------
     tgt_vocab: int
         Size of vocabulary.
     input_size: int
@@ -188,7 +201,7 @@ class TransformerASR(TransformerInterface):
         The number of sub-encoder-layers in the encoder (default=6).
     num_decoder_layers : int, optional
         The number of sub-decoder-layers in the decoder (default=6).
-    dim_ffn : int, optional
+    d_ffn : int, optional
         The dimension of the feedforward network model (default=2048).
     dropout : int, optional
         The dropout value (default=0.1).
@@ -248,6 +261,8 @@ class TransformerASR(TransformerInterface):
         One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
         according to the definition of the article. "SummaryMixing-lite" removes the
         local project branch.
+    masked_false_or_true: bool
+        If True, masked elements will be set to True, False otherwise.
 
     Example
     -------
@@ -292,6 +307,7 @@ class TransformerASR(TransformerInterface):
         summary_hid_dim: Optional[list] = [1024],
         summary_out_dim: Optional[int] = 1024,
         mode: Optional[str] = "SummaryMixing",
+        masked_false_or_true: Optional[bool] = True,
     ):
         super().__init__(
             d_model=d_model,
@@ -319,10 +335,16 @@ class TransformerASR(TransformerInterface):
             summary_hid_dim=summary_hid_dim,
             summary_out_dim=summary_out_dim,
             mode=mode,
+            masked_false_or_true=masked_false_or_true,
         )
 
         self.num_decoder_layers = num_decoder_layers
         self.num_encoder_layers = num_encoder_layers
+
+        if attention_type == "SummaryMixing":
+            self.masked_false_or_true = False
+        else:
+            self.masked_false_or_true = masked_false_or_true
 
         self.custom_src_module = ModuleList(
             Linear(
@@ -351,7 +373,7 @@ class TransformerASR(TransformerInterface):
             The index for <pad> token (default=0).
         """
 
-        # reshpae the src vector to [Batch, Time, Fea] is a 4d vector is given
+        # reshape the src vector to [Batch, Time, Fea] is a 4d vector is given
         if src.ndim == 4:
             bz, t, ch1, ch2 = src.shape
             src = src.reshape(bz, t, ch1 * ch2)
@@ -362,20 +384,24 @@ class TransformerASR(TransformerInterface):
             src_mask,
             tgt_mask,
         ) = make_transformer_src_tgt_masks(
-            src, tgt, wav_len, causal=self.causal, pad_idx=pad_idx
+            src,
+            tgt,
+            wav_len,
+            masked_false_or_true=self.masked_false_or_true,
+            causal=self.causal,
+            pad_idx=pad_idx,
         )
 
         src = self.custom_src_module(src)
         # add pos encoding to queries if are sinusoidal ones else
-        if (
-            self.attention_type == "hypermixing"
-            or self.attention_type == "SummaryMixing"
-        ):
+        if self.attention_type == "hypermixing":
             pos_embs_encoder = None
         elif self.attention_type == "RelPosMHAXL":
             pos_embs_encoder = self.positional_encoding(src)
         elif self.positional_encoding_type == "fixed_abs_sine":
             src = src + self.positional_encoding(src)  # add the encodings here
+            pos_embs_encoder = None
+        else:
             pos_embs_encoder = None
 
         encoder_out, _ = self.encoder(
@@ -399,10 +425,17 @@ class TransformerASR(TransformerInterface):
         elif (
             self.positional_encoding_type == "fixed_abs_sine"
             or self.attention_type == "hypermixing"
+            or self.attention_type == "SummaryMixing"
         ):
             tgt = tgt + self.positional_encoding(tgt)
             pos_embs_target = None
             pos_embs_encoder = None
+
+        # This was added for SummaryMixing. Masks need to be False and not True
+        # For SummaryMixing, so we revert here again as the decoder expects the
+        # opposite.
+        if not self.masked_false_or_true:
+            src_key_padding_mask = torch.logical_not(src_key_padding_mask)
 
         decoder_out, _, _ = self.decoder(
             tgt=tgt,
@@ -429,6 +462,10 @@ class TransformerASR(TransformerInterface):
             Hidden output of the encoder.
         enc_len : torch.LongTensor
             The actual length of encoder states.
+
+        Returns
+        -------
+        prediction
         """
         tgt_mask = get_lookahead_mask(tgt)
         src_key_padding_mask = None
@@ -467,16 +504,25 @@ class TransformerASR(TransformerInterface):
         wav_len=None,
         pad_idx=0,
         dynchunktrain_config: Optional[DynChunkTrainConfig] = None,
+        masked_false_or_true: Optional[bool] = True,
     ):
         """
         Encoder forward pass
 
         Arguments
-        ----------
+        ---------
         src : torch.Tensor
             The sequence to the encoder.
-        wav_len: torch.Tensor, optional
+        wav_len : torch.Tensor, optional
             Torch Tensor of shape (batch, ) containing the relative length to padded length for each example.
+        pad_idx : int
+            The index used for padding.
+        dynchunktrain_config : DynChunkTrainConfig
+            Dynamic chunking config.
+
+        Returns
+        -------
+        encoder_out : torch.Tensor
         """
         # reshape the src vector to [Batch, Time, Fea] if a 4d vector is given
         if src.dim() == 4:
@@ -490,6 +536,7 @@ class TransformerASR(TransformerInterface):
             pad_idx=pad_idx,
             causal=self.causal,
             dynchunktrain_config=dynchunktrain_config,
+            masked_false_or_true=masked_false_or_true,
         )
 
         src = self.custom_src_module(src)
@@ -499,6 +546,8 @@ class TransformerASR(TransformerInterface):
             pos_embs_source = self.positional_encoding(src)
         elif self.positional_encoding_type == "fixed_abs_sine":
             src = src + self.positional_encoding(src)
+            pos_embs_source = None
+        else:
             pos_embs_source = None
 
         encoder_out, _ = self.encoder(
@@ -518,7 +567,6 @@ class TransformerASR(TransformerInterface):
         ---------
         src : torch.Tensor
             The sequence (chunk) to the encoder.
-
         context : TransformerASRStreamingContext
             Mutable reference to the streaming context. This holds the state
             needed to persist across chunk inferences and can be built using
@@ -547,10 +595,7 @@ class TransformerASR(TransformerInterface):
         ...     normalize_before=True,
         ...     causal=False,
         ... )
-        >>> ctx = net.make_streaming_context(
-        ...     DynChunkTrainConfig(16, 24),
-        ...     encoder_kwargs={"mha_left_context_size": 24},
-        ... )
+        >>> ctx = net.make_streaming_context(DynChunkTrainConfig(16, 1))
         >>> src1 = torch.rand([8, 16, 64])
         >>> src2 = torch.rand([8, 16, 64])
         >>> out1 = net.encode_streaming(src1, ctx)
@@ -562,7 +607,7 @@ class TransformerASR(TransformerInterface):
         >>> out2.shape
         torch.Size([8, 16, 64])
         >>> ctx.encoder_context.layers[0].mha_left_context.shape
-        torch.Size([8, 24, 64])
+        torch.Size([8, 16, 64])
         >>> combined_out = torch.concat((out1, out2), dim=1)
         >>> combined_out.shape
         torch.Size([8, 32, 64])
@@ -617,15 +662,20 @@ class TransformerASR(TransformerInterface):
         ---------
         dynchunktrain_config : DynChunkTrainConfig
             Runtime chunkwise attention configuration.
-
         encoder_kwargs : dict
             Parameters to be forward to the encoder's `make_streaming_context`.
             Metadata required for the encoder could differ depending on the
             encoder.
+
+        Returns
+        -------
+        TransformerASRStreamingContext
         """
         return TransformerASRStreamingContext(
             dynchunktrain_config=dynchunktrain_config,
-            encoder_context=self.encoder.make_streaming_context(**encoder_kwargs,),
+            encoder_context=self.encoder.make_streaming_context(
+                dynchunktrain_config, **encoder_kwargs,
+            ),
         )
 
     def _init_params(self):
@@ -642,9 +692,12 @@ class EncoderWrapper(nn.Module):
     Important: The TransformerASR class must contain a .encode() function.
 
     Arguments
-    ----------
+    ---------
     transformer : sb.lobes.models.TransformerInterface
         A Transformer instance that contains a .encode() function.
+    *args : tuple
+    **kwargs : dict
+        Arguments to forward to parent class.
 
     Example
     -------
@@ -662,8 +715,27 @@ class EncoderWrapper(nn.Module):
     def __init__(self, transformer, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.transformer = transformer
+        self.make_streaming_context = self.transformer.make_streaming_context
 
     def forward(self, x, wav_lens=None, pad_idx=0, **kwargs):
-        """ Processes the input tensor x and returns an output tensor."""
-        x = self.transformer.encode(x, wav_lens, pad_idx, **kwargs,)
+        """Processes the input tensor x and returns an output tensor."""
+        x = self.transformer.encode(
+            x,
+            wav_lens,
+            pad_idx,
+            **kwargs,
+            masked_false_or_true=self.transformer.masked_false_or_true,
+        )
         return x
+
+    def forward_streaming(self, x, context):
+        """Processes the input audio chunk tensor `x`, using and updating the
+        mutable encoder `context`"""
+        x = self.transformer.encode_streaming(x, context)
+        return x
+
+    def make_streaming_context(self, *args, **kwargs):
+        """Initializes a streaming context. Forwards all arguments to the
+        underlying transformer. See :meth:`speechbrain.lobes.models.transformer.TransformerASR.make_streaming_context`.
+        """
+        return self.transformer.make_streaming_context(*args, **kwargs)

@@ -7,26 +7,25 @@ Authors
 * Sylvain de Langen 2023
 """
 
+import warnings
 from dataclasses import dataclass
+from typing import List, Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, List
+
 import speechbrain as sb
-import warnings
-
-
+from speechbrain.nnet.activations import Swish
 from speechbrain.nnet.attention import (
-    RelPosMHAXL,
     MultiheadAttention,
     PositionalwiseFeedForward,
+    RelPosMHAXL,
 )
-from speechbrain.utils.dynamic_chunk_training import DynChunkTrainConfig
 from speechbrain.nnet.hypermixing import HyperMixing
 from speechbrain.nnet.normalization import LayerNorm
-from speechbrain.nnet.activations import Swish
 from speechbrain.nnet.summary_mixing import SummaryMixing
-
+from speechbrain.utils.dynamic_chunk_training import DynChunkTrainConfig
 
 @dataclass
 class ConformerEncoderLayerStreamingContext:
@@ -63,6 +62,10 @@ class ConformerEncoderLayerStreamingContext:
 class ConformerEncoderStreamingContext:
     """Streaming metadata and state for a `ConformerEncoder`."""
 
+    dynchunktrain_config: DynChunkTrainConfig
+    """Dynamic Chunk Training configuration holding chunk size and context size
+    information."""
+
     layers: List[ConformerEncoderLayerStreamingContext]
     """Streaming metadata and state for each layer of the encoder."""
 
@@ -71,7 +74,7 @@ class ConvolutionModule(nn.Module):
     """This is an implementation of convolution module in Conformer.
 
     Arguments
-    ----------
+    ---------
     input_size : int
         The expected size of the input embedding dimension.
     kernel_size: int, optional
@@ -86,6 +89,8 @@ class ConvolutionModule(nn.Module):
          Whether the convolution should be causal or not.
     dilation: int, optional
          Dilation factor for the non bottleneck conv layer.
+     masked_false_or_true: bool
+            If True, masked elements will be set to True, False otherwise.
 
     Example
     -------
@@ -106,12 +111,14 @@ class ConvolutionModule(nn.Module):
         dropout=0.0,
         causal=False,
         dilation=1,
+        masked_false_or_true=True,
     ):
         super().__init__()
 
         self.kernel_size = kernel_size
         self.causal = causal
         self.dilation = dilation
+        self.masked_false_or_true = masked_false_or_true
 
         if self.causal:
             self.padding = (kernel_size - 1) * 2 ** (dilation - 1)
@@ -136,8 +143,10 @@ class ConvolutionModule(nn.Module):
             bias=bias,
         )
 
-        # NOTE: there appears to be a mismatch compared to the Conformer paper:
-        # I believe the first LayerNorm below is supposed to be a BatchNorm.
+        # BatchNorm in the original Conformer replaced with a LayerNorm due to
+        # https://github.com/speechbrain/speechbrain/pull/1329
+        # see discussion
+        # https://github.com/speechbrain/speechbrain/pull/933#issuecomment-1033367884
 
         self.after_conv = nn.Sequential(
             nn.LayerNorm(input_size),
@@ -171,7 +180,12 @@ class ConvolutionModule(nn.Module):
             This should only be used for training (or, if you know what you're
             doing, for masked evaluation at inference time), as the forward
             streaming function should be used at inference time.
-            """
+
+        Returns
+        -------
+        out: torch.Tensor
+            The output tensor.
+        """
 
         if dynchunktrain_config is not None:
             # chances are chunking+causal is unintended; i don't know where it
@@ -311,7 +325,10 @@ class ConvolutionModule(nn.Module):
             out = self.after_conv(out)
 
         if mask is not None:
-            out.masked_fill_(mask, 0.0)
+            if self.masked_false_or_true:
+                out.masked_fill_(mask, 0.0)
+            else:
+                out = out * mask
 
         return out
 
@@ -320,7 +337,7 @@ class ConformerEncoderLayer(nn.Module):
     """This is an implementation of Conformer encoder layer.
 
     Arguments
-    ----------
+    ---------
     d_model : int
         The expected size of the input embedding.
     d_ffn : int
@@ -339,7 +356,7 @@ class ConformerEncoderLayer(nn.Module):
         Whether  convolution module.
     dropout : int, optional
         Dropout for the encoder.
-    causal: bool, optional
+    causal : bool, optional
         Whether the convolutions should be causal or not.
     attention_type: str, optional
         type of attention layer, e.g. regulaMHA for regular MultiHeadAttention.
@@ -390,6 +407,11 @@ class ConformerEncoderLayer(nn.Module):
         self.attention_type = attention_type
         self.mode = mode
 
+        # This parameter is used to tell the convolutional masking (padding)
+        # if it mask for 0 (False) or 1 (True). Typically True, but can be false
+        # for SummaryMixing
+        self.masked_false_or_true = True
+
         if attention_type == "regularMHA":
             self.mha_layer = MultiheadAttention(
                 nhead=nhead, d_model=d_model, dropout=dropout, kdim=kdim, vdim=vdim,
@@ -419,11 +441,19 @@ class ConformerEncoderLayer(nn.Module):
                 summary_hid_dim=summary_hid_dim,
                 summary_out_dim=d_model,
                 activation=activation,
+                global_dropout=dropout,
                 mode=mode,
             )
+            self.masked_false_or_true = False
 
         self.convolution_module = ConvolutionModule(
-            d_model, kernel_size, bias, activation, dropout, causal=causal
+            d_model,
+            kernel_size,
+            bias,
+            activation,
+            dropout,
+            causal=causal,
+            masked_false_or_true=self.masked_false_or_true,
         )
 
         self.ffn_module1 = nn.Sequential(
@@ -475,12 +505,17 @@ class ConformerEncoderLayer(nn.Module):
             conv_mask = src_key_padding_mask.unsqueeze(-1)
         # ffn module
         x = x + 0.5 * self.ffn_module1(x)
-        # muti-head attention module
+        # multi-head attention module
         skip = x
         x = self.norm1(x)
 
         if self.attention_type == "SummaryMixing":
-            x = self.mha_layer(x, attention_mask=src_key_padding_mask)
+            x = self.mha_layer(
+                x, sum_mask=src_mask, src_padding_mask=src_key_padding_mask
+            )
+            self_attn = None
+        elif self.attention_type == "vanillaMHA":
+            x = self.mha_layer(x, x, x, attn_mask=src_mask,)
             self_attn = None
         else:
             x, self_attn = self.mha_layer(
@@ -518,11 +553,20 @@ class ConformerEncoderLayer(nn.Module):
         x : torch.Tensor
             Input tensor for this layer. Batching is supported as long as you
             keep the context consistent.
-        context: ConformerEncoderStreamingContext
+        context : ConformerEncoderStreamingContext
             Mutable streaming context; the same object should be passed across
             calls.
-        pos_embs: torch.Tensor, optional
-            Positional embeddings, if used."""
+        pos_embs : torch.Tensor, optional
+            Positional embeddings, if used.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Output tensor.
+        self_attn : list
+            List of self attention values.
+        """
+
 
         orig_len = x.shape[-2]
         # ffn module
@@ -545,12 +589,14 @@ class ConformerEncoderLayer(nn.Module):
         # multi-head attention module
         skip = x
         x = self.norm1(x)
+        
         if self.attention_type == "SummaryMixing":
             x = self.mha_layer(x, attention_mask=None)
         else:
             x, self_attn = self.mha_layer(
                 x, x, x, attn_mask=None, key_padding_mask=None, pos_embs=pos_embs,
             )
+            
         x = x + skip
 
         # truncate outputs corresponding to the MHA left context (we only care
@@ -581,6 +627,11 @@ class ConformerEncoderLayer(nn.Module):
         mha_left_context_size : int
             How many left frames should be saved and used as left context to the
             current chunk when streaming
+
+        Returns
+        -------
+        ConformerEncoderLayerStreamingContext
+
         """
         return ConformerEncoderLayerStreamingContext(
             mha_left_context_size=mha_left_context_size
@@ -750,11 +801,19 @@ class ConformerEncoder(nn.Module):
         src : torch.Tensor
             Input tensor. Batching is supported as long as you keep the context
             consistent.
-        context: ConformerEncoderStreamingContext
+        context : ConformerEncoderStreamingContext
             Mutable streaming context; the same object should be passed across
             calls.
-        pos_embs: torch.Tensor, optional
-            Positional embeddings, if used."""
+        pos_embs : torch.Tensor, optional
+            Positional embeddings, if used.
+
+        Returns
+        -------
+        output : torch.Tensor
+            The output of the streaming conformer.
+        attention_lst : list
+            The attention values.
+        """
 
         if self.attention_type == "RelPosMHAXL":
             if pos_embs is None:
@@ -773,23 +832,27 @@ class ConformerEncoder(nn.Module):
 
         return output, attention_lst
 
-    def make_streaming_context(self, mha_left_context_size: int):
+    def make_streaming_context(self, dynchunktrain_config: DynChunkTrainConfig):
+
         """Creates a blank streaming context for the encoder.
 
         Arguments
         ---------
-        mha_left_context_size : int
-            How many left frames should be saved and used as left context to the
-            current chunk when streaming. This value is replicated across all
-            layers.
+        dynchunktrain_config: Optional[DynChunkTrainConfig]
+            Dynamic Chunk Training configuration object for streaming
+
+        Returns
+        -------
+        ConformerEncoderStreamingContext
         """
         return ConformerEncoderStreamingContext(
+            dynchunktrain_config=dynchunktrain_config,
             layers=[
                 layer.make_streaming_context(
-                    mha_left_context_size=mha_left_context_size
+                    mha_left_context_size=dynchunktrain_config.left_context_size_frames()
                 )
                 for layer in self.layers
-            ]
+            ],
         )
 
 
@@ -797,7 +860,7 @@ class ConformerDecoderLayer(nn.Module):
     """This is an implementation of Conformer encoder layer.
 
     Arguments
-    ----------
+    ---------
     d_model : int
         The expected size of the input embedding.
     d_ffn : int
@@ -810,16 +873,16 @@ class ConformerDecoderLayer(nn.Module):
         Dimension of the key.
     vdim : int, optional
         Dimension of the value.
-    activation: torch.nn.Module, optional
+    activation : torch.nn.Module, optional
          Activation function used in each Conformer layer.
     bias : bool, optional
         Whether  convolution module.
     dropout : int, optional
         Dropout for the encoder.
-    causal: bool, optional
+    causal : bool, optional
         Whether the convolutions should be causal or not.
-    attention_type: str, optional
-        type of attention layer, e.g. regulaMHA for regular MultiHeadAttention.
+    attention_type : str, optional
+        type of attention layer, e.g. regularMHA for regular MultiHeadAttention.
 
     Example
     -------
@@ -903,27 +966,35 @@ class ConformerDecoderLayer(nn.Module):
     ):
         """
         Arguments
-        ----------
-            tgt: torch.Tensor
-                The sequence to the decoder layer.
-            memory: torch.Tensor
-                The sequence from the last layer of the encoder.
-            tgt_mask: torch.Tensor, optional, optional
-                The mask for the tgt sequence.
-            memory_mask: torch.Tensor, optional
-                The mask for the memory sequence.
-            tgt_key_padding_mask : torch.Tensor, optional
-                The mask for the tgt keys per batch.
-            memory_key_padding_mask : torch.Tensor, optional
-                The mask for the memory keys per batch.
-            pos_emb_tgt: torch.Tensor, torch.nn.Module, optional
-                Module or tensor containing the target sequence positional embeddings for each attention layer.
-            pos_embs_src: torch.Tensor, torch.nn.Module, optional
-                Module or tensor containing the source sequence positional embeddings for each attention layer.
+        ---------
+        tgt: torch.Tensor
+            The sequence to the decoder layer.
+        memory: torch.Tensor
+            The sequence from the last layer of the encoder.
+        tgt_mask: torch.Tensor, optional, optional
+            The mask for the tgt sequence.
+        memory_mask: torch.Tensor, optional
+            The mask for the memory sequence.
+        tgt_key_padding_mask: torch.Tensor, optional
+            The mask for the tgt keys per batch.
+        memory_key_padding_mask: torch.Tensor, optional
+            The mask for the memory keys per batch.
+        pos_embs_tgt: torch.Tensor, torch.nn.Module, optional
+            Module or tensor containing the target sequence positional embeddings for each attention layer.
+        pos_embs_src: torch.Tensor, torch.nn.Module, optional
+            Module or tensor containing the source sequence positional embeddings for each attention layer.
+
+        Returns
+        -------
+        x: torch.Tensor
+            The output tensor
+        self_attn : torch.Tensor
+        self_attn : torch.Tensor
+            The self attention tensor
         """
         # ffn module
         tgt = tgt + 0.5 * self.ffn_module1(tgt)
-        # muti-head attention module
+        # multi-head attention module
         skip = tgt
         x = self.norm1(tgt)
         x, self_attn = self.mha_layer(
@@ -946,7 +1017,7 @@ class ConformerDecoder(nn.Module):
     """This class implements the Transformer decoder.
 
     Arguments
-    ----------
+    ---------
     num_layers: int
         Number of layers.
     nhead: int
@@ -962,7 +1033,7 @@ class ConformerDecoder(nn.Module):
     dropout: float, optional
         Dropout rate.
     activation: torch.nn.Module, optional
-         Activation function used after non-bottleneck conv layer.
+        Activation function used after non-bottleneck conv layer.
     kernel_size : int, optional
         Kernel size of convolutional layer.
     bias : bool, optional
@@ -970,7 +1041,7 @@ class ConformerDecoder(nn.Module):
     causal: bool, optional
         Whether the convolutions should be causal or not.
     attention_type: str, optional
-        type of attention layer, e.g. regulaMHA for regular MultiHeadAttention.
+        type of attention layer, e.g. regularMHA for regular MultiHeadAttention.
 
 
     Example
@@ -1032,7 +1103,7 @@ class ConformerDecoder(nn.Module):
     ):
         """
         Arguments
-        ----------
+        ---------
         tgt: torch.Tensor
             The sequence to the decoder layer.
         memory: torch.Tensor
@@ -1045,10 +1116,19 @@ class ConformerDecoder(nn.Module):
             The mask for the tgt keys per batch.
         memory_key_padding_mask : torch.Tensor, optional
             The mask for the memory keys per batch.
-        pos_emb_tgt: torch.Tensor, torch.nn.Module, optional
+        pos_embs_tgt: torch.Tensor, torch.nn.Module, optional
             Module or tensor containing the target sequence positional embeddings for each attention layer.
         pos_embs_src: torch.Tensor, torch.nn.Module, optional
             Module or tensor containing the source sequence positional embeddings for each attention layer.
+
+        Returns
+        -------
+        output: torch.Tensor
+            Conformer decoder output.
+        self_attns : list
+            Location of self attentions.
+        multihead_attns : list
+            Location of multihead attentions.
 
         """
         output = tgt
