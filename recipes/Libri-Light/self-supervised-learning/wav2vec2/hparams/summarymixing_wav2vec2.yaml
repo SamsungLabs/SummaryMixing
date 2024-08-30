@@ -1,0 +1,180 @@
+# ################################
+# SummaryMixing © 2023 by Samsung Electronics is licensed under CC BY-NC 4.0.
+
+# This is the pre-training configurations of SummaryMixing wav2vec 2.0.
+
+# Usage: Install SpeechBrain
+# Create a folder recipes/Libri-Light/self-supervised-learning/wav2vec2 
+# Copy this file under recipes/Libri-Light/self-supervised-learning/wav2vec2/hparams
+# SummaryMixing: https://arxiv.org/abs/2307.07421
+# SummaryMixing SSL: https://arxiv.org/pdf/2407.13377
+
+# Authors
+#  * Titouan Parcollet 2023, 2024
+#  * Shucong Zhang 2023, 2024
+#  * Rogier van Dalen 2023, 2024
+#  * Sourav Bhattacharya 2023, 2024
+# ################################
+
+# NOTE! to pre-train on Libri-Light, you need to firstly download the Libri-Light data
+# through the toolkit in the Libri-Light github repo
+# then, use the vad script from the Libri-Light github repo to apply vad to the data
+# then, use "make_librilight_csv.py" to make the csv file for SpeechBrain pretraining
+# after prepared the data and the csv file, use "python train_sb_wav2vec2_mel.py hparams/summarymixing_wav2vec2.yaml"
+
+data_folder: # path to the libri-light folder
+output_folder: results/summix_w2v2/libri-light-medium
+save_folder: !ref <output_folder>/save
+# Logging file for every N optimizer steps (many lines)
+train_steps_log: !ref <output_folder>/train_steps_log.txt
+# Logging file per epoch
+train_stage_log: !ref <output_folder>/train_stage_log.txt
+
+train_csv: # path to train.csv NOTE! please refer to make_librilight_csv.py to see how to create train.csv for libri-light
+valid_csv: # path to LibriSpeech dev-clean.csv We use dev-clean to monitor the pre-training, not to do model selection
+skip_prep: True # train_csv and valid_csv should be created before runing the SSL pre-training
+
+avoid_if_longer_than: 30.0
+avoid_if_shorter_than: 10.0 # after vad most utterances are quite long
+log_interval: 1000 # Logging every N optimizer steps
+precision: fp16 # bf16, fp16 or fp32
+max_grad_norm: 100.
+
+# The training will either stops at number_of_epochs or optimizer_step_limit
+# I.e. the first that is reached.
+number_of_epochs: 3000
+optimizer_step_limit: 300000
+
+# Dynamic Batching parameters
+max_batch_length: 360 
+num_buckets: 70 
+shuffle: True # if true re-creates batches at each epoch shuffling examples.
+batch_ordering: random 
+grad_accumulation_factor: 4 # we use 4 GPUs. 360s batch * 4 grad_acc * 4 GPUs = 1.6h
+dynamic_batch_sampler_train:
+   max_batch_length: !ref <max_batch_length>
+   num_buckets: !ref <num_buckets>
+   shuffle: !ref <shuffle>
+   batch_ordering: !ref <batch_ordering>
+
+train_dataloader_options:
+   num_workers: 4
+
+test_dataloader_options:
+   batch_size: 8 # DynamicBatching not used at testing time
+   num_workers: 4
+
+# Training parameters
+lr: 0.0005
+warmup: 30000
+# This is equivalent to optimizer_step_limit - warmup
+# Necessary to do to have a linear warmup and linear decay directly
+# If cooldown < optimizer_step_limit - warmup then a third step with a slower
+# decay is applied in the middle (see the implementation of the scheduler)
+cooldown: 270000
+
+# Loss parameters
+diversity_loss_weight: 0.1
+mask_prob: 0.65
+mask_length: 10
+num_negatives: 100
+
+# Model parameters
+frontend_type: mel_cnn_base
+embedding_dim: 768
+extractor_dim: 512
+final_dim: 256
+encoder_layerdrop: 0.05
+latentextractor_kernels: [3, 3]
+latentextractor_strides: [2, 1]
+
+# Feature parameters
+sample_rate: 16000
+n_fft: 400
+n_mels: 80
+hop_length: 10
+win_length: 25
+
+optimizer: !name:torch.optim.AdamW
+   lr: !ref <lr>
+   weight_decay: 0.05
+   eps: 0.000001
+
+epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+   limit: !ref <number_of_epochs>
+
+CNN: !new:speechbrain.lobes.models.wav2vec.W2VLatentExtractor
+   kernel_sizes: !ref <latentextractor_kernels>
+   strides: !ref <latentextractor_strides>
+   out_channels: [!ref <extractor_dim>, !ref <extractor_dim>]
+   input_dim: 80
+
+encoder: !new:speechbrain.lobes.models.transformer.Conformer.ConformerEncoder
+   d_model: !ref <embedding_dim>
+   num_layers: 12
+   nhead: 8
+   d_ffn: 3072
+   dropout: 0.1
+   layerdrop_prob: !ref <encoder_layerdrop>
+   attention_type: SummaryMixing #SummaryMixing regularMHA
+   local_proj_hid_dim: [!ref <embedding_dim>]
+   local_proj_out_dim: !ref <embedding_dim>
+   summary_hid_dim: [!ref <embedding_dim>]
+   mode: "SummaryMixing"
+
+encoder_wrapper: !new:speechbrain.lobes.models.wav2vec.EncoderWrapper
+   in_dim: !ref <extractor_dim>
+   embedding_dim: !ref <embedding_dim>
+   latent_encoder: !ref <encoder>
+   dropout_encoder_input: 0.1
+
+target_quantiser: !new:speechbrain.lobes.models.wav2vec.W2VTargetQuantiser
+   in_dim: !ref <extractor_dim>
+   out_dim: !ref <final_dim>
+
+feat_proj: !new:torch.nn.Linear
+   in_features: !ref <embedding_dim>
+   out_features: !ref <final_dim>
+
+modules:
+   compute_features: !ref <compute_features>
+   normalize: !ref <normalize>
+   CNN: !ref <CNN>
+   latent_encoder: !ref <encoder_wrapper>
+   feat_proj: !ref <feat_proj>
+   target_quantiser: !ref <target_quantiser>
+
+loss: !new:speechbrain.nnet.losses.ContrastiveLoss
+   logit_temp: 0.1
+
+lr_scheduler: !new:speechbrain.nnet.schedulers.WarmCoolDecayLRSchedule
+   lr: !ref <lr>
+   warmup: !ref <warmup>
+   cooldown: !ref <cooldown>
+   total_steps: !ref <optimizer_step_limit>
+
+normalize: !new:speechbrain.processing.features.InputNormalization
+   norm_type: sentence
+
+compute_features: !new:speechbrain.lobes.features.Fbank
+   sample_rate: !ref <sample_rate>
+   n_fft: !ref <n_fft>
+   n_mels: !ref <n_mels>
+   hop_length: !ref <hop_length>
+   win_length: !ref <win_length>
+
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+   checkpoints_dir: !ref <save_folder>
+   recoverables:
+      CNN: !ref <CNN>
+      latent_encoder: !ref <encoder_wrapper>
+      feat_proj: !ref <feat_proj>
+      target_quantiser: !ref <target_quantiser>
+      scheduler: !ref <lr_scheduler>
+      counter: !ref <epoch_counter>
+
+train_steps_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+   save_file: !ref <train_steps_log>
+
+train_stage_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+   save_file: !ref <train_stage_log>

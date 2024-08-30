@@ -1,15 +1,22 @@
 """ SummaryMixing © 2023 by Samsung Electronics is licensed under CC BY-NC 4.0.
 
+This library connects SummaryMixing to the standard SpeechBrain lobes for Branchformer ASR.
+Large parts of the code come from the SpeechBrain repository.
+
+Usage: Install SpeechBrain and copy this file under speechbrain/lobes/models/transformer/
+Source: https://arxiv.org/abs/2307.07421
+
 Authors
--------
-* Jianyuan Zhong 2020
-* Samuele Cornell 2021
-* Sylvain de Langen 2023
+ * Titouan Parcollet 2023
+ * Shucong Zhang 2023
+ * Rogier van Dalen 2023
+ * Sourav Bhattacharya 2023
 """
 
 import warnings
 from dataclasses import dataclass
 from typing import List, Optional
+import numpy as np 
 
 import torch
 import torch.nn as nn
@@ -372,6 +379,8 @@ class ConformerEncoderLayer(nn.Module):
         One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
         according to the definition of the article. "SummaryMixing-lite" removes the
         local project branch.
+    use_layernorm: bool, optional
+        Using layernorm for the local and the global branch in SummaryMixing or not.
 
     Example
     -------
@@ -401,6 +410,7 @@ class ConformerEncoderLayer(nn.Module):
         local_proj_out_dim=512,
         summary_hid_dim=[1024],
         mode="SummaryMixing",
+        use_layernorm=True,
     ):
         super().__init__()
 
@@ -442,6 +452,7 @@ class ConformerEncoderLayer(nn.Module):
                 summary_out_dim=d_model,
                 activation=activation,
                 global_dropout=dropout,
+                use_layernorm=use_layernorm,
                 mode=mode,
             )
             self.masked_false_or_true = False
@@ -679,6 +690,12 @@ class ConformerEncoder(nn.Module):
         One of "SummaryMixing" or "SummaryMixing-lite". Changes the SummaryMixing cell
         according to the definition of the article. "SummaryMixing-lite" removes the
         local project branch.
+    use_layernorm: bool, optional
+        Using layernorm for the local and the global branch in SummaryMixing or not.
+    layerdrop_prob: float, optional
+        probability for layer dropout
+    output_hidden_states: bool, optional
+        if output the hidden states of all the layers
 
 
     Example
@@ -710,6 +727,9 @@ class ConformerEncoder(nn.Module):
         local_proj_out_dim=512,
         summary_hid_dim=[1024],
         mode="SummaryMixing",
+        use_layernorm: Optional[bool] = True,
+        layerdrop_prob=0.0,
+        output_hidden_states=False,
     ):
         super().__init__()
 
@@ -730,6 +750,7 @@ class ConformerEncoder(nn.Module):
                     local_proj_hid_dim=local_proj_hid_dim,
                     local_proj_out_dim=local_proj_out_dim,
                     summary_hid_dim=summary_hid_dim,
+                    use_layernorm=use_layernorm,
                     mode=mode,
                 )
                 for i in range(num_layers)
@@ -737,6 +758,9 @@ class ConformerEncoder(nn.Module):
         )
         self.norm = LayerNorm(d_model, eps=1e-6)
         self.attention_type = attention_type
+        self.layerdrop_prob = layerdrop_prob
+        self.rng = np.random.default_rng()
+        self.output_hidden_states = output_hidden_states
 
     def forward(
         self,
@@ -771,17 +795,34 @@ class ConformerEncoder(nn.Module):
                 )
 
         output = src
+        if self.layerdrop_prob > 0.0:
+            keep_probs = self.rng.random(len(self.layers))
+        else:
+            keep_probs = None
         attention_lst = []
-        for enc_layer in self.layers:
-            output, attention = enc_layer(
-                output,
-                src_mask=src_mask,
-                src_key_padding_mask=src_key_padding_mask,
-                pos_embs=pos_embs,
-                dynchunktrain_config=dynchunktrain_config,
-            )
-            attention_lst.append(attention)
+        if self.output_hidden_states:
+            hidden_lst = []
+        for i, enc_layer in enumerate(self.layers):
+            if (
+                not self.training
+                or self.layerdrop_prob == 0.0
+                or keep_probs[i] > self.layerdrop_prob
+            ):
+                output, attention = enc_layer(
+                    output,
+                    src_mask=src_mask,
+                    src_key_padding_mask=src_key_padding_mask,
+                    pos_embs=pos_embs,
+                    dynchunktrain_config=dynchunktrain_config,
+                )
+                attention_lst.append(attention)
+                if self.output_hidden_states:
+                    hidden_lst.append(output)
         output = self.norm(output)
+
+        if self.output_hidden_states:
+            hidden_lst[-1] = output
+            return output, hidden_lst, attention_lst
 
         return output, attention_lst
 

@@ -268,6 +268,7 @@ Transformer: !new:speechbrain.lobes.models.transformer.TransformerASR.Transforme
    local_proj_hid_dim: !ref <local_proj_hid_dim>
    local_proj_out_dim: !ref <local_proj_out_dim>
    summary_hid_dim: !ref <summary_hid_dim>
+   use_layernorm: False
    mode: !ref <mode>
    normalize_before: True
    causal: False
