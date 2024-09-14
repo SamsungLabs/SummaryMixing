@@ -44,7 +44,7 @@ Please cite SummaryMixing as follows:
 ```bibtex
 @misc{summarymixing,
   title={{SummaryMixing}: A Linear-Complexity Alternative to Self-Attention for Speech Recognition and Understanding},
-  author={Titouan Parcollet and Rogier van Dalen and and Shucong Zhang and Sourav Bhattacharya},
+  author={Titouan Parcollet and Rogier van Dalen and Shucong Zhang and Sourav Bhattacharya},
   year={2023},
   eprint={2307.07421},
   archivePrefix={arXiv},
