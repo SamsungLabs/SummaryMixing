@@ -42,14 +42,14 @@ The following Table gives an idea of the results observed with Librispeech. More
 
 Please cite SummaryMixing as follows:
 ```bibtex
-@misc{summarymixing,
-  title={{SummaryMixing}: A Linear-Complexity Alternative to Self-Attention for Speech Recognition and Understanding},
-  author={Titouan Parcollet and Rogier van Dalen and Shucong Zhang and Sourav Bhattacharya},
-  year={2023},
-  eprint={2307.07421},
-  archivePrefix={arXiv},
-  primaryClass={eess.AS},
-  note={arXiv:2307.07421}
+@inproceedings{parcollet24_interspeech,
+  title     = {SummaryMixing: A Linear-Complexity Alternative to Self-Attention for Speech Recognition and Understanding},
+  author    = {Titouan Parcollet and Rogier {van Dalen} and Shucong Zhang and Sourav Bhattacharya},
+  year      = {2024},
+  booktitle = {Interspeech 2024},
+  pages     = {3460--3464},
+  doi       = {10.21437/Interspeech.2024-40},
+  issn      = {2958-1796},
 }
 ```
 
